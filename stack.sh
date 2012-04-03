@@ -894,13 +894,27 @@ fi
 # Quantum
 # -------
 
+# Put config files in /etc/quantum for everyone to find
+QUANTUM_CONF_DIR=/etc/quantum
+if [[ ! -d $QUANTUM_CONF_DIR ]]; then
+    sudo mkdir -p $QUANTUM_CONF_DIR
+fi
+sudo chown `whoami` $QUANTUM_CONF_DIR
+
+# Set default values when using Linux Bridge plugin
+if [[ "$Q_PLUGIN" = "linuxbridge" ]]; then
+    # set the config file
+    QUANTUM_LB_CONFIG_FILE=$QUANTUM_DIR/etc/quantum/plugins/linuxbridge/linuxbridge_conf.ini
+    #QUANTUM_LB_CONFIG_FILE=$QUANTUM_CONF_DIR/linuxbridge_conf.ini
+    #sudo cp $QUANTUM_DIR/etc/quantum/plugins/linuxbridge/linuxbridge_conf.ini $QUANTUM_LB_CONFIG_FILE
+    #set the default network interface
+    QUANTUM_LB_PRIVATE_INTERFACE=${QUANTUM_LB_PRIVATE_INTERFACE:-eth0}
+fi
 # Quantum service
 if is_service_enabled q-svc; then
-    QUANTUM_CONF_DIR=/etc/quantum
-    if [[ ! -d $QUANTUM_CONF_DIR ]]; then
-        sudo mkdir -p $QUANTUM_CONF_DIR
-    fi
-    sudo chown `whoami` $QUANTUM_CONF_DIR
+    QUANTUM_PLUGIN_INI_FILE=$QUANTUM_DIR/etc/plugins.ini
+#    QUANTUM_PLUGIN_INI_FILE=$QUANTUM_CONF_DIR/plugins.ini
+#    sudo cp $QUANTUM_DIR/etc/plugins.ini $QUANTUM_PLUGIN_INI_FILE
     if [[ "$Q_PLUGIN" = "openvswitch" ]]; then
         # Install deps
         # FIXME add to files/apts/quantum, but don't install if not needed!
@@ -915,11 +929,30 @@ if is_service_enabled q-svc; then
             echo "mysql must be enabled in order to use the $Q_PLUGIN Quantum plugin."
             exit 1
         fi
-        QUANTUM_PLUGIN_INI_FILE=$QUANTUM_CONF_DIR/plugins.ini
-        sudo cp $QUANTUM_DIR/etc/plugins.ini $QUANTUM_PLUGIN_INI_FILE
         # Make sure we're using the openvswitch plugin
         sudo sed -i -e "s/^provider =.*$/provider = quantum.plugins.openvswitch.ovs_quantum_plugin.OVSQuantumPlugin/g" $QUANTUM_PLUGIN_INI_FILE
     fi
+    if [[ "$Q_PLUGIN" = "linuxbridge" ]]; then
+        # Install deps
+        # FIXME add to files/apts/quantum, but don't install if not needed!
+        apt_get install python-configobj
+        # Create database for the plugin/agent
+        if is_service_enabled mysql; then
+            mysql -u$MYSQL_USER -p$MYSQL_PASSWORD -e 'DROP DATABASE IF EXISTS quantum_linux_bridge;'
+            mysql -u$MYSQL_USER -p$MYSQL_PASSWORD -e 'CREATE DATABASE IF NOT EXISTS quantum_linux_bridge;'
+        else
+            echo "mysql must be enabled in order to use the $Q_PLUGIN Quantum plugin."
+            exit 1
+        fi
+        # Make sure we're using the linuxbridge plugin and set the mysql hostname, username and password in the config file
+        sudo sed -i -e "s/^provider =.*$/provider = quantum.plugins.linuxbridge.LinuxBridgePlugin.LinuxBridgePlugin/g" $QUANTUM_PLUGIN_INI_FILE 
+        sudo sed -i -e "s/^connection = sqlite$/#connection = sqlite/g" $QUANTUM_LB_CONFIG_FILE
+        sudo sed -i -e "s/^#connection = mysql$/connection = mysql/g" $QUANTUM_LB_CONFIG_FILE
+        sudo sed -i -e "s/^user = .*$/user = $MYSQL_USER/g" $QUANTUM_LB_CONFIG_FILE
+        sudo sed -i -e "s/^pass = .*$/pass = $MYSQL_PASSWORD/g" $QUANTUM_LB_CONFIG_FILE
+        sudo sed -i -e "s/^host = .*$/host = $MYSQL_HOST/g" $QUANTUM_LB_CONFIG_FILE
+    fi
+   #sudo cp $QUANTUM_DIR/etc/plugins.ini $QUANTUM_PLUGIN_INI_FILE
    sudo cp $QUANTUM_DIR/etc/quantum.conf $QUANTUM_CONF_DIR/quantum.conf
    screen_it q-svc "cd $QUANTUM_DIR && PYTHONPATH=.:$QUANTUM_CLIENT_DIR:$PYTHONPATH python $QUANTUM_DIR/bin/quantum-server $QUANTUM_CONF_DIR/quantum.conf"
 fi
@@ -939,7 +972,12 @@ if is_service_enabled q-agt; then
        sudo sed -i -e "s/^sql_connection =.*$/sql_connection = mysql:\/\/$MYSQL_USER:$MYSQL_PASSWORD@$MYSQL_HOST\/ovs_quantum?charset=utf8/g" $QUANTUM_OVS_CONFIG_FILE
        screen_it q-agt "sleep 4; sudo python $QUANTUM_DIR/quantum/plugins/openvswitch/agent/ovs_quantum_agent.py $QUANTUM_OVS_CONFIG_FILE -v"
     fi
-
+    if [[ "$Q_PLUGIN" = "linuxbridge" ]]; then
+       # Start up the quantum <-> linuxbridge agent
+       apt_get install bridge-utils
+       sudo sed -i -e "s/^physical_interface = .*$/physical_interface = $QUANTUM_LB_PRIVATE_INTERFACE/g" $QUANTUM_LB_CONFIG_FILE
+       screen_it q-agt "sleep 4; sudo python $QUANTUM_DIR/quantum/plugins/linuxbridge/agent/linuxbridge_quantum_agent.py $QUANTUM_LB_CONFIG_FILE -v"
+    fi
 fi
 
 # Melange service
@@ -1364,6 +1402,12 @@ if is_service_enabled quantum; then
         add_nova_opt "linuxnet_interface_driver=nova.network.linux_net.LinuxOVSInterfaceDriver"
         add_nova_opt "quantum_use_dhcp=True"
     fi
+    if is_service_enabled q-svc && [[ "$Q_PLUGIN" = "linuxbridge" ]]; then
+        add_nova_opt "libvirt_vif_type=ethernet"
+        add_nova_opt "libvirt_vif_driver=nova.virt.libvirt.vif.QuantumLinuxBridgeVIFDriver"
+        add_nova_opt "linuxnet_interface_driver=nova.network.linux_net.QuantumLinuxBridgeInterfaceDriver"
+        add_nova_opt "quantum_use_dhcp=True"
+    fi
 else
     add_nova_opt "network_manager=nova.network.manager.$NET_MAN"
 fi
@@ -1586,7 +1630,7 @@ fi
 # happen after we've started the Quantum service.
 if is_service_enabled mysql && is_service_enabled nova; then
     # create a small network
-    $NOVA_DIR/bin/nova-manage network create private $FIXED_RANGE 1 $FIXED_NETWORK_SIZE $NETWORK_CREATE_ARGS
+    $NOVA_DIR/bin/nova-manage network create private $FIXED_RANGE 1 $FIXED_NETWORK_SIZE
 
     # create some floating ips
     $NOVA_DIR/bin/nova-manage floating create $FLOATING_RANGE
@@ -1645,24 +1689,6 @@ if is_service_enabled g-reg; then
     if [[ -n "$UPLOAD_LEGACY_TTY" ]]; then
         IMAGE_URLS="${IMAGE_URLS:+${IMAGE_URLS},}http://images.ansolabs.com/tty.tgz"
     fi
-
-    # Option to upload quantum images, which provide multi-interface support.
-    if [ $UPLOAD_QUANTUM_TTY ]; then
-        if [ ! -f $FILES/tty-quantum.tgz ]; then
-	    wget -c http://www.openvswitch.org/tty-quantum.tgz \
-	                -O $FILES/tty-quantum.tgz
-	fi
-	
-	if [ ! -d ${FILES}/images-quantum ]; then
-	            mkdir -p ${FILES}/images-quantum
-	fi
-	tar -zxf $FILES/tty-quantum.tgz -C $FILES/images-quantum
-        RVAL=`glance add --silent-upload -A $TOKEN name="tty-quantum-kernel" is_public=true container_format=aki disk_format=aki < $FILES/images-quantum/aki-tty/image`
-	KERNEL_ID=`echo $RVAL | cut -d":" -f2 | tr -d " "`
-	RVAL=`glance add --silent-upload -A $TOKEN name="tty-quantum-ramdisk" is_public=true container_format=ari disk_format=ari < $FILES/images-quantum/ari-tty/image`
-	RAMDISK_ID=`echo $RVAL | cut -d":" -f2 | tr -d " "`
-	glance add -A $TOKEN name="tty-quantum" is_public=true container_format=ami disk_format=ami kernel_id=$KERNEL_ID ramdisk_id=$RAMDISK_ID < $FILES/images-quantum/ami-tty/image
-        fi
 
     for image_url in ${IMAGE_URLS//,/ }; do
         # Downloads the image (uec ami+aki style), then extracts it.
