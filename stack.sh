@@ -1646,6 +1646,24 @@ if is_service_enabled g-reg; then
         IMAGE_URLS="${IMAGE_URLS:+${IMAGE_URLS},}http://images.ansolabs.com/tty.tgz"
     fi
 
+    # Option to upload quantum images, which provide multi-interface support.
+    if [ $UPLOAD_QUANTUM_TTY ]; then
+        if [ ! -f $FILES/tty-quantum.tgz ]; then
+	    wget -c http://www.openvswitch.org/tty-quantum.tgz \
+	                -O $FILES/tty-quantum.tgz
+	fi
+	
+	if [ ! -d ${FILES}/images-quantum ]; then
+	            mkdir -p ${FILES}/images-quantum
+	fi
+	tar -zxf $FILES/tty-quantum.tgz -C $FILES/images-quantum
+        RVAL=`glance add --silent-upload -A $TOKEN name="tty-quantum-kernel" is_public=true container_format=aki disk_format=aki < $FILES/images-quantum/aki-tty/image`
+	KERNEL_ID=`echo $RVAL | cut -d":" -f2 | tr -d " "`
+	RVAL=`glance add --silent-upload -A $TOKEN name="tty-quantum-ramdisk" is_public=true container_format=ari disk_format=ari < $FILES/images-quantum/ari-tty/image`
+	RAMDISK_ID=`echo $RVAL | cut -d":" -f2 | tr -d " "`
+	glance add -A $TOKEN name="tty-quantum" is_public=true container_format=ami disk_format=ami kernel_id=$KERNEL_ID ramdisk_id=$RAMDISK_ID < $FILES/images-quantum/ami-tty/image
+        fi
+
     for image_url in ${IMAGE_URLS//,/ }; do
         # Downloads the image (uec ami+aki style), then extracts it.
         IMAGE_FNAME=`basename "$image_url"`
