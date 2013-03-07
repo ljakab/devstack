@@ -2,7 +2,7 @@ DevStack is a set of scripts and utilities to quickly deploy an OpenStack cloud.
 
 # Goals
 
-* To quickly build dev OpenStack environments in a clean Oneiric or Precise environment
+* To quickly build dev OpenStack environments in a clean Ubuntu or Fedora environment
 * To describe working configurations of OpenStack (which code branches work together?  what do config files look like for those branches?)
 * To make it easier for developers to dive into OpenStack so that they can productively contribute without having to understand every part of the system at once
 * To make it easy to prototype cross-project features
@@ -57,19 +57,46 @@ If the EC2 API is your cup-o-tea, you can create credentials and use euca2ools:
 
 You can override environment variables used in `stack.sh` by creating file name `localrc`.  It is likely that you will need to do this to tweak your networking configuration should you need to access your cloud from a different host.
 
+# Database Backend
+
+Multiple database backends are available. The available databases are defined in the lib/databases directory.
+`mysql` is the default database, choose a different one by putting the following in `localrc`:
+
+    disable_service mysql
+    enable_service postgresql
+
+`mysql` is the default database.
+
+# RPC Backend
+
+Multiple RPC backends are available. Currently, this
+includes RabbitMQ (default), Qpid, and ZeroMQ. Your backend of
+choice may be selected via the `localrc`.
+
+Note that selecting more than one RPC backend will result in a failure.
+
+Example (ZeroMQ):
+
+    ENABLED_SERVICES="$ENABLED_SERVICES,-rabbit,-qpid,zeromq"
+
+Example (Qpid):
+
+    ENABLED_SERVICES="$ENABLED_SERVICES,-rabbit,-zeromq,qpid"
+
 # Swift
 
 Swift is not installed by default, you can enable easily by adding this to your `localrc`:
 
-    ENABLED_SERVICE="$ENABLED_SERVICES,swift"
+    enable_service swift
 
 If you want a minimal Swift install with only Swift and Keystone you can have this instead in your `localrc`:
 
-    ENABLED_SERVICES="key,mysql,swift"
+    disable_all_services
+    enable_service key mysql swift
 
 If you use Swift with Keystone, Swift will authenticate against it. You will need to make sure to use the Keystone URL to auth against.
 
-Swift will be acting as a S3 endpoint for Keystone so effectively replacing the `nova-objectstore`.
+If you are enabling `swift3` in `ENABLED_SERVICES` devstack will install the swift3 middleware emulation. Swift will be configured to act as a S3 endpoint for Keystone so effectively replacing the `nova-objectstore`.
 
 Only Swift proxy server is launched in the screen session all other services are started in background and managed by `swift-init` tool.
 

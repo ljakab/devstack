@@ -5,6 +5,9 @@
 # Keep track of the current devstack directory.
 TOP_DIR=$(cd $(dirname "$0") && pwd)
 
+# Import common functions
+source $TOP_DIR/functions
+
 # Load local configuration
 source $TOP_DIR/stackrc
 
@@ -25,7 +28,7 @@ skips=""
 
 # Loop over each possible script (by basename)
 for script in $basenames; do
-    if [[ "$SKIP_EXERCISES" =~ $script ]] ; then
+    if [[ ,$SKIP_EXERCISES, =~ ,$script, ]] ; then
         skips="$skips $script"
     else
         echo "====================================================================="

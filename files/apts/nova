@@ -1,5 +1,5 @@
 dnsmasq-base
-dnsmasq-utils # for dhcp_release only available in dist:oneiric,precise
+dnsmasq-utils # for dhcp_release only available in dist:oneiric,precise,quantal
 kpartx
 parted
 arping # only available in dist:natty
@@ -8,7 +8,6 @@ mysql-server # NOPRIME
 python-mysqldb
 python-xattr # needed for glance which is needed for nova --- this shouldn't be here
 python-lxml # needed for glance which is needed for nova --- this shouldn't be here
-kvm
 gawk
 iptables
 ebtables
@@ -16,9 +15,12 @@ sqlite3
 sudo
 kvm
 libvirt-bin # NOPRIME
+libjs-jquery-tablesorter # Needed for coverage html reports
 vlan
 curl
+genisoimage # required for config_drive
 rabbitmq-server # NOPRIME
+qpidd # dist:precise NOPRIME
 socat # used by ajaxterm
 python-mox
 python-paste
@@ -29,6 +31,7 @@ python-libvirt
 python-libxml2
 python-routes
 python-netaddr
+python-numpy # used by websockify for spice console
 python-pastedeploy
 python-eventlet
 python-cheetah
@@ -42,3 +45,4 @@ python-boto
 python-kombu
 python-feedparser
 python-iso8601
+python-qpid # dist:precise

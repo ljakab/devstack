@@ -1,8 +1,11 @@
 #!/bin/bash
-# get_uec_image.sh - Prepare Ubuntu UEC images
+
+# **get_uec_image.sh**
+
+# Download and prepare Ubuntu UEC images
 
 CACHEDIR=${CACHEDIR:-/opt/stack/cache}
-ROOTSIZE=${ROOTSIZE:-2000}
+ROOTSIZE=${ROOTSIZE:-2000M}
 
 # Keep track of the current directory
 TOOLS_DIR=$(cd $(dirname "$0") && pwd)
@@ -11,17 +14,17 @@ TOP_DIR=$(cd $TOOLS_DIR/..; pwd)
 # Import common functions
 . $TOP_DIR/functions
 
-# exit on error to stop unexpected errors
+# Exit on error to stop unexpected errors
 set -o errexit
 set -o xtrace
 
 usage() {
-    echo "Usage: $0 - Fetch and prepare Ubuntu images"
+    echo "Usage: $0 - Download and prepare Ubuntu UEC images"
     echo ""
     echo "$0 [-r rootsize] release imagefile [kernel]"
     echo ""
     echo "-r size   - root fs size (min 2000MB)"
-    echo "release   - Ubuntu release: jaunty - oneric"
+    echo "release   - Ubuntu release: lucid - quantal"
     echo "imagefile - output image file"
     echo "kernel    - output kernel"
     exit 1
@@ -61,6 +64,8 @@ IMG_FILE_TMP=`mktemp $IMG_FILE.XXXXXX`
 KERNEL=$3
 
 case $DIST_NAME in
+    quantal)    ;;
+    precise)    ;;
     oneiric)    ;;
     natty)      ;;
     maverick)   ;;
@@ -87,7 +92,7 @@ fi
 
 # Get the UEC image
 UEC_NAME=$DIST_NAME-server-cloudimg-amd64
-if [ ! -d $CACHEDIR ]; then
+if [ ! -d $CACHEDIR/$DIST_NAME ]; then
     mkdir -p $CACHEDIR/$DIST_NAME
 fi
 if [ ! -e $CACHEDIR/$DIST_NAME/$UEC_NAME.tar.gz ]; then

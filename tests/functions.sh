@@ -54,6 +54,12 @@ handlers = aa, bb
 
 [bbb]
 handlers=ee,ff
+
+[ ccc ]
+spaces  =  yes
+
+[ddd]
+empty =
 EOF
 
 # Test with spaces
@@ -74,6 +80,23 @@ else
     echo "iniget failed: $VAL"
 fi
 
+# Test with spaces in section header
+
+VAL=$(iniget test.ini " ccc " spaces)
+if [[ "$VAL" == "yes" ]]; then
+    echo "OK: $VAL"
+else
+    echo "iniget failed: $VAL"
+fi
+
+iniset test.ini "b b" opt_ion 42
+
+VAL=$(iniget test.ini "b b" opt_ion)
+if [[ "$VAL" == "42" ]]; then
+    echo "OK: $VAL"
+else
+    echo "iniget failed: $VAL"
+fi
 
 # Test without spaces, end of file
 
@@ -93,6 +116,29 @@ else
     echo "iniget failed: $VAL"
 fi
 
+# test empty option
+if ini_has_option test.ini ddd empty; then
+   echo "OK: ddd.empty present"
+else
+   echo "ini_has_option failed: ddd.empty not found"
+fi
+
+# test non-empty option
+if ini_has_option test.ini bbb handlers; then
+   echo "OK: bbb.handlers present"
+else
+   echo "ini_has_option failed: bbb.handlers not found"
+fi
+
+# test changing empty option
+iniset test.ini ddd empty "42"
+
+VAL=$(iniget test.ini ddd empty)
+if [[ "$VAL" == "42" ]]; then
+    echo "OK: $VAL"
+else
+    echo "iniget failed: $VAL"
+fi
 
 # Test section not exist
 
@@ -112,7 +158,6 @@ else
     echo "iniget failed: $VAL"
 fi
 
-
 # Test option not exist
 
 VAL=$(iniget test.ini aaa debug)
@@ -120,6 +165,12 @@ if [[ -z "$VAL" ]]; then
     echo "OK aaa.debug not present"
 else
     echo "iniget failed: $VAL"
+fi
+
+if ! ini_has_option test.ini aaa debug; then
+    echo "OK aaa.debug not present"
+else
+    echo "ini_has_option failed: aaa.debug"
 fi
 
 iniset test.ini aaa debug "999"
@@ -140,4 +191,147 @@ if [[ -z "$VAL" ]]; then
     echo "OK"
 else
     echo "inicomment failed: $VAL"
+fi
+
+rm test.ini
+
+# Enabling/disabling services
+
+echo "Testing enable_service()"
+
+function test_enable_service() {
+    local start="$1"
+    local add="$2"
+    local finish="$3"
+
+    ENABLED_SERVICES="$start"
+    enable_service $add
+    if [ "$ENABLED_SERVICES" = "$finish" ]
+    then
+        echo "OK: $start + $add -> $ENABLED_SERVICES"
+    else
+        echo "changing $start to $finish with $add failed: $ENABLED_SERVICES"
+    fi
+}
+
+test_enable_service '' a 'a'
+test_enable_service 'a' b 'a,b'
+test_enable_service 'a,b' c 'a,b,c'
+test_enable_service 'a,b' c 'a,b,c'
+test_enable_service 'a,b,' c 'a,b,c'
+test_enable_service 'a,b' c,d 'a,b,c,d'
+test_enable_service 'a,b' "c d" 'a,b,c,d'
+test_enable_service 'a,b,c' c 'a,b,c'
+
+test_enable_service 'a,b,-c' c 'a,b'
+test_enable_service 'a,b,c' -c 'a,b'
+
+function test_disable_service() {
+    local start="$1"
+    local del="$2"
+    local finish="$3"
+
+    ENABLED_SERVICES="$start"
+    disable_service "$del"
+    if [ "$ENABLED_SERVICES" = "$finish" ]
+    then
+        echo "OK: $start - $del -> $ENABLED_SERVICES"
+    else
+        echo "changing $start to $finish with $del failed: $ENABLED_SERVICES"
+    fi
+}
+
+echo "Testing disable_service()"
+test_disable_service 'a,b,c' a 'b,c'
+test_disable_service 'a,b,c' b 'a,c'
+test_disable_service 'a,b,c' c 'a,b'
+
+test_disable_service 'a,b,c' a 'b,c'
+test_disable_service 'b,c' b 'c'
+test_disable_service 'c' c ''
+test_disable_service '' d ''
+
+test_disable_service 'a,b,c,' c 'a,b'
+test_disable_service 'a,b' c 'a,b'
+
+
+echo "Testing disable_all_services()"
+ENABLED_SERVICES=a,b,c
+disable_all_services
+
+if [[ -z "$ENABLED_SERVICES" ]]
+then
+    echo "OK"
+else
+    echo "disabling all services FAILED: $ENABLED_SERVICES"
+fi
+
+echo "Testing disable_negated_services()"
+
+
+function test_disable_negated_services() {
+    local start="$1"
+    local finish="$2"
+
+    ENABLED_SERVICES="$start"
+    disable_negated_services
+    if [ "$ENABLED_SERVICES" = "$finish" ]
+    then
+        echo "OK: $start + $add -> $ENABLED_SERVICES"
+    else
+        echo "changing $start to $finish failed: $ENABLED_SERVICES"
+    fi
+}
+
+test_disable_negated_services '-a' ''
+test_disable_negated_services '-a,a' ''
+test_disable_negated_services '-a,-a' ''
+test_disable_negated_services 'a,-a' ''
+test_disable_negated_services 'b,a,-a' 'b'
+test_disable_negated_services 'a,b,-a' 'b'
+test_disable_negated_services 'a,-a,b' 'b'
+
+
+echo "Testing is_package_installed()"
+
+if [[ -z "$os_PACKAGE" ]]; then
+    GetOSVersion
+fi
+
+if [[ "$os_PACKAGE" = "deb" ]]; then
+    is_package_installed dpkg
+    VAL=$?
+elif [[ "$os_PACKAGE" = "rpm" ]]; then
+    is_package_installed rpm
+    VAL=$?
+else
+    VAL=1
+fi
+if [[ "$VAL" -eq 0 ]]; then
+    echo "OK"
+else
+    echo "is_package_installed() on existing package failed"
+fi
+
+if [[ "$os_PACKAGE" = "deb" ]]; then
+    is_package_installed dpkg bash
+    VAL=$?
+elif [[ "$os_PACKAGE" = "rpm" ]]; then
+    is_package_installed rpm bash
+    VAL=$?
+else
+    VAL=1
+fi
+if [[ "$VAL" -eq 0 ]]; then
+    echo "OK"
+else
+    echo "is_package_installed() on more than one existing package failed"
+fi
+
+is_package_installed zzzZZZzzz
+VAL=$?
+if [[ "$VAL" -ne 0 ]]; then
+    echo "OK"
+else
+    echo "is_package_installed() on non-existing package failed"
 fi

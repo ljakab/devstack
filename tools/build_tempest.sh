@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 #
-# build_tempest.sh - Checkout and prepare a Tempest repo
-#                    (https://github.com/openstack/tempest.git)
+# **build_tempest.sh**
+
+# Checkout and prepare a Tempest repo: https://github.com/openstack/tempest.git
 
 function usage {
     echo "$0 - Check out and prepare a Tempest repo"
@@ -47,8 +48,6 @@ DEST=${DEST:-/opt/stack}
 TEMPEST_DIR=$DEST/tempest
 
 # Install tests and prerequisites
-pip_install `cat $TOP_DIR/files/pips/tempest`
-
 git_clone $TEMPEST_REPO $TEMPEST_DIR $TEMPEST_BRANCH
 
 trap - SIGHUP SIGINT SIGTERM SIGQUIT EXIT

@@ -1,13 +1,21 @@
 #!/usr/bin/env bash
 
+# **client-env.sh**
+
 # Test OpenStack client enviroment variable handling
 
 echo "*********************************************************************"
 echo "Begin DevStack Exercise: $0"
 echo "*********************************************************************"
 
-# Verify client workage
-VERIFY=${1:-""}
+# This script exits on an error so that errors don't compound and you see
+# only the first error that occured.
+set -o errexit
+
+# Print the commands being run so that we can see the command that triggers
+# an error.  It is also useful for following allowing as the install occurs.
+set -o xtrace
+
 
 # Settings
 # ========
@@ -25,7 +33,7 @@ source $TOP_DIR/openrc
 # Import exercise configuration
 source $TOP_DIR/exerciserc
 
-# Unset all of the known NOVA_ vars
+# Unset all of the known NOVA_* vars
 unset NOVA_API_KEY
 unset NOVA_ENDPOINT_NAME
 unset NOVA_PASSWORD
@@ -99,6 +107,23 @@ if [[ "$ENABLED_SERVICES" =~ "n-api" ]]; then
     fi
 fi
 
+# Cinder client
+# -------------
+
+if [[ "$ENABLED_SERVICES" =~ "c-api" ]]; then
+    if [[ "$SKIP_EXERCISES" =~ "c-api" ]] ; then
+        STATUS_CINDER="Skipped"
+    else
+        echo -e "\nTest Cinder"
+        if cinder list; then
+            STATUS_CINDER="Succeeded"
+        else
+            STATUS_CINDER="Failed"
+            RETURN=1
+        fi
+    fi
+fi
+
 # Glance client
 # -------------
 
@@ -107,7 +132,7 @@ if [[ "$ENABLED_SERVICES" =~ "g-api" ]]; then
         STATUS_GLANCE="Skipped"
     else
         echo -e "\nTest Glance"
-        if glance index; then
+        if glance image-list; then
             STATUS_GLANCE="Succeeded"
         else
             STATUS_GLANCE="Failed"
@@ -133,6 +158,8 @@ if [[ "$ENABLED_SERVICES" =~ "swift" ]]; then
     fi
 fi
 
+set +o xtrace
+
 # Results
 # -------
 
@@ -146,11 +173,14 @@ echo -e "\n"
 report "Keystone" $STATUS_KEYSTONE
 report "Nova" $STATUS_NOVA
 report "EC2" $STATUS_EC2
+report "Cinder" $STATUS_CINDER
 report "Glance" $STATUS_GLANCE
 report "Swift" $STATUS_SWIFT
 
-echo "*********************************************************************"
-echo "SUCCESS: End DevStack Exercise: $0"
-echo "*********************************************************************"
+if (( $RETURN == 0 )); then
+    echo "*********************************************************************"
+    echo "SUCCESS: End DevStack Exercise: $0"
+    echo "*********************************************************************"
+fi
 
 exit $RETURN

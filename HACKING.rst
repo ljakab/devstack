@@ -15,6 +15,16 @@ https://github.com/openstack-dev/devstack.git.  Besides the master branch that
 tracks the OpenStack trunk branches a separate branch is maintained for all
 OpenStack releases starting with Diablo (stable/diablo).
 
+Contributing code to DevStack follows the usual OpenStack process as described
+in `How To Contribute`__ in the OpenStack wiki.  `DevStack's LaunchPad project`__
+contains the usual links for blueprints, bugs, tec.
+
+__ contribute_
+.. _contribute: http://wiki.openstack.org/HowToContribute.
+
+__ lp_
+.. _lp: https://launchpad.net/~devstack
+
 The primary script in DevStack is ``stack.sh``, which performs the bulk of the
 work for DevStack's use cases.  There is a subscript ``functions`` that contains
 generally useful shell functions and is used by a number of the scripts in
@@ -53,10 +63,54 @@ configuration of the user environment::
     source $TOP_DIR/openrc
 
 ``stack.sh`` is a rather large monolithic script that flows through from beginning
-to end.  There is a proposal to segment it to put the OpenStack projects
-into their own sub-scripts to better document the projects as a unit rather than
-have it scattered throughout ``stack.sh``.  Someday.
+to end.  The process of breaking it down into project-level sub-scripts is nearly
+complete and should make ``stack.sh`` easier to read and manage.
 
+These library sub-scripts have a number of fixed entry points, some of which may
+just be stubs.  These entry points will be called by ``stack.sh`` in the
+following order::
+
+    install_XXXX
+    configure_XXXX
+    init_XXXX
+    start_XXXX
+    stop_XXXX
+    cleanup_XXXX
+
+There is a sub-script template in ``lib/templates`` to be used in creating new
+service sub-scripts.  The comments in ``<>`` are meta comments describing
+how to use the template and should be removed.
+
+In order to show the dependencies and conditions under which project functions
+are executed the top-level conditional testing for things like ``is_service_enabled``
+should be done in ``stack.sh``.  There may be nested conditionals that need
+to be in the sub-script, such as testing for keystone being enabled in
+``configure_swift()``.
+
+
+stackrc
+-------
+
+``stackrc`` is the global configuration file for DevStack.  It is responsible for
+calling ``localrc`` if it exists so configuration can be overridden by the user.
+
+The criteria for what belongs in ``stackrc`` can be vaguely summarized as
+follows:
+
+* All project respositories and branches (for historical reasons)
+* Global configuration that may be referenced in ``localrc``, i.e. ``DEST``, ``DATA_DIR``
+* Global service configuration like ``ENABLED_SERVICES``
+* Variables used by multiple services that do not have a clear owner, i.e.
+  ``VOLUME_BACKING_FILE_SIZE`` (nova-volumes and cinder) or ``PUBLIC_NETWORK_NAME``
+  (nova-network and quantum)
+* Variables that can not be cleanly declared in a project file due to
+  dependency ordering, i.e. the order of sourcing the project files can
+  not be changed for other reasons but the earlier file needs to dereference a
+  variable set in the later file.  This should be rare.
+
+Also, variable declarations in ``stackrc`` do NOT allow overriding (the form
+``FOO=${FOO:-baz}``); if they did then they can already be changed in ``localrc``
+and can stay in the project file.
 
 Documentation
 -------------

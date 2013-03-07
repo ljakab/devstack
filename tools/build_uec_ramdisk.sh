@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
-# build_uec_ramdisk.sh - Build RAM disk images based on UEC image
 
-# exit on error to stop unexpected errors
+# **build_uec_ramdisk.sh**
+
+# Build RAM disk images based on UEC image
+
+# Exit on error to stop unexpected errors
 set -o errexit
 
 if [ ! "$#" -eq "1" ]; then
@@ -58,7 +61,7 @@ DIST_NAME=${DIST_NAME:-oneiric}
 # Configure how large the VM should be
 GUEST_SIZE=${GUEST_SIZE:-2G}
 
-# exit on error to stop unexpected errors
+# Exit on error to stop unexpected errors
 set -o errexit
 set -o xtrace
 
@@ -95,7 +98,7 @@ GUEST_NAME=${GUEST_NAME:-devstack}
 # Pre-load the image with basic environment
 if [ ! -e $image_dir/disk-primed ]; then
     cp $image_dir/disk $image_dir/disk-primed
-    $TOOLS_DIR/warm_apts_and_pips_for_uec.sh $image_dir/disk-primed
+    $TOOLS_DIR/warm_apts_for_uec.sh $image_dir/disk-primed
     $TOOLS_DIR/copy_dev_environment_to_uec.sh $image_dir/disk-primed
 fi
 
