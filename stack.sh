@@ -18,6 +18,9 @@
 
 # Learn more and get the most recent version at http://devstack.org
 
+# Make sure custom grep options don't get in the way
+unset GREP_OPTIONS
+
 # Keep track of the devstack directory
 TOP_DIR=$(cd $(dirname "$0") && pwd)
 
@@ -102,7 +105,7 @@ disable_negated_services
 
 # Warn users who aren't on an explicitly supported distro, but allow them to
 # override check and attempt installation with ``FORCE=yes ./stack``
-if [[ ! ${DISTRO} =~ (oneiric|precise|quantal|raring|f16|f17|f18|opensuse-12.2) ]]; then
+if [[ ! ${DISTRO} =~ (oneiric|precise|quantal|raring|f16|f17|f18|opensuse-12.2|rhel6) ]]; then
     echo "WARNING: this script has not been tested on $DISTRO"
     if [[ "$FORCE" != "yes" ]]; then
         die $LINENO "If you wish to run this script anyway run with FORCE=yes"
@@ -535,6 +538,12 @@ source $TOP_DIR/tools/install_prereqs.sh
 
 install_rpc_backend
 
+# a place for distro-specific post-prereq workarounds
+if [[ -f $TOP_DIR/tools/${DISTRO}/post-prereq.sh ]]; then
+    echo_summary "Running ${DISTRO} extra prereq tasks"
+    source $TOP_DIR/tools/${DISTRO}/post-prereq.sh
+fi
+
 if is_service_enabled $DATABASE_BACKENDS; then
     install_database
 fi
@@ -925,6 +934,25 @@ if is_service_enabled nova; then
            # Attempt to convert flags to options
            iniset $NOVA_CONF baremetal ${I/=/ }
         done
+
+   # PowerVM
+   # -------
+
+    elif [ "$VIRT_DRIVER" = 'powervm' ]; then
+        echo_summary "Using PowerVM driver"
+        POWERVM_MGR_TYPE=${POWERVM_MGR_TYPE:-"ivm"}
+        POWERVM_MGR_HOST=${POWERVM_MGR_HOST:-"powervm.host"}
+        POWERVM_MGR_USER=${POWERVM_MGR_USER:-"padmin"}
+        POWERVM_MGR_PASSWD=${POWERVM_MGR_PASSWD:-"password"}
+        POWERVM_IMG_REMOTE_PATH=${POWERVM_IMG_REMOTE_PATH:-"/tmp"}
+        POWERVM_IMG_LOCAL_PATH=${POWERVM_IMG_LOCAL_PATH:-"/tmp"}
+        iniset $NOVA_CONF DEFAULT compute_driver nova.virt.powervm.PowerVMDriver
+        iniset $NOVA_CONF DEFAULT powervm_mgr_type $POWERVM_MGR_TYPE
+        iniset $NOVA_CONF DEFAULT powervm_mgr $POWERVM_MGR_HOST
+        iniset $NOVA_CONF DEFAULT powervm_mgr_user $POWERVM_MGR_USER
+        iniset $NOVA_CONF DEFAULT powervm_mgr_passwd $POWERVM_MGR_PASSWD
+        iniset $NOVA_CONF DEFAULT powervm_img_remote_path $POWERVM_IMG_REMOTE_PATH
+        iniset $NOVA_CONF DEFAULT powervm_img_local_path $POWERVM_IMG_LOCAL_PATH
 
     # Default
     # -------
