@@ -50,8 +50,9 @@ BUILD_TIMEOUT=400
 
 BOTO_MATERIALS_PATH="$FILES/images/s3-materials/cirros-0.3.1"
 
-# Entry Points
-# ------------
+
+# Functions
+# ---------
 
 # configure_tempest() - Set config files, create data dirs, etc
 function configure_tempest() {
@@ -266,10 +267,6 @@ function configure_tempest() {
 # install_tempest() - Collect source and prepare
 function install_tempest() {
     git_clone $TEMPEST_REPO $TEMPEST_DIR $TEMPEST_BRANCH
-
-    # Tempest doesn't satisfy its dependencies on its own, so
-    # install them here instead.
-    pip_install -r $TEMPEST_DIR/tools/pip-requires
 }
 
 # init_tempest() - Initialize ec2 images
@@ -298,3 +295,7 @@ function init_tempest() {
 
 # Restore xtrace
 $XTRACE
+
+# Local variables:
+# mode: shell-script
+# End:

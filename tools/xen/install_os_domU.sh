@@ -20,13 +20,16 @@ if [ ! -e ../../localrc ]; then
 fi
 
 # This directory
-TOP_DIR=$(cd $(dirname "$0") && pwd)
+THIS_DIR=$(cd $(dirname "$0") && pwd)
 
 # Source lower level functions
-. $TOP_DIR/../../functions
+. $THIS_DIR/../../functions
 
 # Include onexit commands
-. $TOP_DIR/scripts/on_exit.sh
+. $THIS_DIR/scripts/on_exit.sh
+
+# xapi functions
+. $THIS_DIR/functions
 
 
 #
@@ -43,48 +46,26 @@ xe_min()
   xe "$cmd" --minimal "$@"
 }
 
-
 #
 # Prepare Dom0
 # including installing XenAPI plugins
 #
 
-cd $TOP_DIR
-if [ -f ./master ]
-then
-    rm -rf ./master
-    rm -rf ./nova
-fi
+cd $THIS_DIR
 
-# get nova
-NOVA_ZIPBALL_URL=${NOVA_ZIPBALL_URL:-$(echo $NOVA_REPO | sed "s:\.git$::;s:$:/zipball/$NOVA_BRANCH:g")}
-wget -nv $NOVA_ZIPBALL_URL -O nova-zipball --no-check-certificate
-unzip -q -o nova-zipball  -d ./nova
+# Install plugins
 
-# install xapi plugins
-XAPI_PLUGIN_DIR=/etc/xapi.d/plugins/
-if [ ! -d $XAPI_PLUGIN_DIR ]; then
-    # the following is needed when using xcp-xapi
-    XAPI_PLUGIN_DIR=/usr/lib/xcp/plugins/
-fi
-cp -pr ./nova/*/plugins/xenserver/xenapi/etc/xapi.d/plugins/* $XAPI_PLUGIN_DIR
+## Nova plugins
+NOVA_ZIPBALL_URL=${NOVA_ZIPBALL_URL:-$(zip_snapshot_location $NOVA_REPO $NOVA_BRANCH)}
+install_xapi_plugins_from_zipball $NOVA_ZIPBALL_URL
 
-# Install the netwrap xapi plugin to support agent control of dom0 networking
+## Install the netwrap xapi plugin to support agent control of dom0 networking
 if [[ "$ENABLED_SERVICES" =~ "q-agt" && "$Q_PLUGIN" = "openvswitch" ]]; then
-    if [ -f ./quantum ]; then
-        rm -rf ./quantum
-    fi
-    # get quantum
-    QUANTUM_ZIPBALL_URL=${QUANTUM_ZIPBALL_URL:-$(echo $QUANTUM_REPO | sed "s:\.git$::;s:$:/zipball/$QUANTUM_BRANCH:g")}
-    wget -nv $QUANTUM_ZIPBALL_URL -O quantum-zipball --no-check-certificate
-    unzip -q -o quantum-zipball  -d ./quantum
-    cp -pr ./quantum/*/quantum/plugins/openvswitch/agent/xenapi/etc/xapi.d/plugins/* $XAPI_PLUGIN_DIR
+    QUANTUM_ZIPBALL_URL=${QUANTUM_ZIPBALL_URL:-$(zip_snapshot_location $QUANTUM_REPO $QUANTUM_BRANCH)}
+    install_xapi_plugins_from_zipball $QUANTUM_ZIPBALL_URL
 fi
 
-chmod a+x ${XAPI_PLUGIN_DIR}*
-
-mkdir -p /boot/guest
-
+create_directory_for_kernels
 
 #
 # Configure Networking
@@ -271,7 +252,7 @@ if [ -z "$templateuuid" ]; then
             HTTP_SERVER_LOCATION="/var/www/html"
             mkdir -p $HTTP_SERVER_LOCATION
         fi
-        cp -f $TOP_DIR/devstackubuntupreseed.cfg $HTTP_SERVER_LOCATION
+        cp -f $THIS_DIR/devstackubuntupreseed.cfg $HTTP_SERVER_LOCATION
         MIRROR=${MIRROR:-""}
         if [ -n "$MIRROR" ]; then
             sed -e "s,d-i mirror/http/hostname string .*,d-i mirror/http/hostname string $MIRROR," \
@@ -280,11 +261,11 @@ if [ -z "$templateuuid" ]; then
     fi
 
     # Update the template
-    $TOP_DIR/scripts/install_ubuntu_template.sh $PRESEED_URL
+    $THIS_DIR/scripts/install_ubuntu_template.sh $PRESEED_URL
 
     # create a new VM with the given template
     # creating the correct VIFs and metadata
-    $TOP_DIR/scripts/install-os-vpx.sh -t "$UBUNTU_INST_TEMPLATE_NAME" -v $VM_BR -m $MGT_BR -p $PUB_BR -l $GUEST_NAME -r $OSDOMU_MEM_MB -k "flat_network_bridge=${VM_BR}"
+    $THIS_DIR/scripts/install-os-vpx.sh -t "$UBUNTU_INST_TEMPLATE_NAME" -v $VM_BR -m $MGT_BR -p $PUB_BR -l $GUEST_NAME -r $OSDOMU_MEM_MB -k "flat_network_bridge=${VM_BR}"
 
     # wait for install to finish
     wait_for_VM_to_halt
@@ -298,7 +279,7 @@ if [ -z "$templateuuid" ]; then
     #
 
     # Install XenServer tools, and other such things
-    $TOP_DIR/prepare_guest_template.sh "$GUEST_NAME"
+    $THIS_DIR/prepare_guest_template.sh "$GUEST_NAME"
 
     # start the VM to run the prepare steps
     xe vm-start vm="$GUEST_NAME"
@@ -320,7 +301,7 @@ fi
 #
 # Inject DevStack inside VM disk
 #
-$TOP_DIR/build_xva.sh "$GUEST_NAME"
+$THIS_DIR/build_xva.sh "$GUEST_NAME"
 
 # create a snapshot before the first boot
 # to allow a quick re-run with the same settings

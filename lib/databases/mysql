@@ -8,7 +8,30 @@
 MY_XTRACE=$(set +o | grep xtrace)
 set +o xtrace
 
+
 register_database mysql
+
+
+# Functions
+# ---------
+
+# Get rid of everything enough to cleanly change database backends
+function cleanup_database_mysql {
+    if is_ubuntu; then
+        # Get ruthless with mysql
+        stop_service $MYSQL
+        sudo aptitude purge -y ~nmysql-server
+        sudo rm -rf /var/lib/mysql
+        return
+    elif is_fedora; then
+        MYSQL=mysqld
+    elif is_suse; then
+        MYSQL=mysql
+    else
+        return
+    fi
+    stop_service $MYSQL
+}
 
 function recreate_database_mysql {
     local db=$1
@@ -115,10 +138,14 @@ EOF
 }
 
 function database_connection_url_mysql {
-    local output=$1
-    local db=$2
-    eval "$output=$BASE_SQL_CONN/$db?charset=utf8"
+    local db=$1
+    echo "$BASE_SQL_CONN/$db?charset=utf8"
 }
+
 
 # Restore xtrace
 $MY_XTRACE
+
+# Local variables:
+# mode: shell-script
+# End:

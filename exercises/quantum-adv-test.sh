@@ -235,7 +235,7 @@ function create_network {
     source $TOP_DIR/openrc $TENANT $TENANT
     local NET_ID=$(quantum net-create --tenant_id $TENANT_ID $NET_NAME $EXTRA| grep ' id ' | awk '{print $4}' )
     quantum subnet-create --ip_version 4 --tenant_id $TENANT_ID --gateway $GATEWAY $NET_ID $CIDR
-    quantum-debug probe-create $NET_ID
+    quantum-debug probe-create --device-owner compute $NET_ID
     source $TOP_DIR/openrc demo demo
 }
 
@@ -330,7 +330,7 @@ function delete_network {
 }
 
 function delete_networks {
-   foreach_tenant_net 'delete_network ${%TENANT%_NAME} ${%NUM%}'
+   foreach_tenant_net 'delete_network ${%TENANT%_NAME} %NUM%'
    #TODO(nati) add secuirty group check after it is implemented
    # source $TOP_DIR/openrc demo1 demo1
    # nova secgroup-delete-rule default icmp -1 -1 0.0.0.0/0

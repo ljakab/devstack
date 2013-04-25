@@ -51,27 +51,19 @@ fi
 GLANCE_HOSTPORT=${GLANCE_HOSTPORT:-$SERVICE_HOST:9292}
 
 
-# Entry Points
-# ------------
+# Functions
+# ---------
 
 # cleanup_glance() - Remove residual data files, anything left over from previous
 # runs that a clean run would need to clean up
 function cleanup_glance() {
     # kill instances (nova)
     # delete image files (glance)
-    # This function intentionally left blank
-    :
-}
-
-# configure_glanceclient() - Set config files, create data dirs, etc
-function configure_glanceclient() {
-    setup_develop $GLANCECLIENT_DIR
+    sudo rm -rf $GLANCE_CACHE_DIR $GLANCE_IMAGE_DIR $GLANCE_AUTH_CACHE_DIR
 }
 
 # configure_glance() - Set config files, create data dirs, etc
 function configure_glance() {
-    setup_develop $GLANCE_DIR
-
     if [[ ! -d $GLANCE_CONF_DIR ]]; then
         sudo mkdir -p $GLANCE_CONF_DIR
     fi
@@ -81,8 +73,7 @@ function configure_glance() {
     cp $GLANCE_DIR/etc/glance-registry.conf $GLANCE_REGISTRY_CONF
     iniset $GLANCE_REGISTRY_CONF DEFAULT debug True
     inicomment $GLANCE_REGISTRY_CONF DEFAULT log_file
-    local dburl
-    database_connection_url dburl glance
+    local dburl=`database_connection_url glance`
     iniset $GLANCE_REGISTRY_CONF DEFAULT sql_connection $dburl
     iniset $GLANCE_REGISTRY_CONF DEFAULT use_syslog $SYSLOG
     iniset $GLANCE_REGISTRY_CONF paste_deploy flavor keystone
@@ -117,6 +108,15 @@ function configure_glance() {
     fi
     iniset_rpc_backend glance $GLANCE_API_CONF DEFAULT
     iniset $GLANCE_API_CONF keystone_authtoken signing_dir $GLANCE_AUTH_CACHE_DIR/api
+
+    # Store the images in swift if enabled.
+    if is_service_enabled s-proxy; then
+        iniset $GLANCE_API_CONF DEFAULT default_store swift
+        iniset $GLANCE_API_CONF DEFAULT swift_store_auth_address $KEYSTONE_SERVICE_PROTOCOL://$KEYSTONE_SERVICE_HOST:$KEYSTONE_SERVICE_PORT/v2.0/
+        iniset $GLANCE_API_CONF DEFAULT swift_store_user $SERVICE_TENANT_NAME:glance
+        iniset $GLANCE_API_CONF DEFAULT swift_store_key $SERVICE_PASSWORD
+        iniset $GLANCE_API_CONF DEFAULT swift_store_create_container_on_put True
+    fi
 
     cp -p $GLANCE_DIR/etc/glance-registry-paste.ini $GLANCE_REGISTRY_PASTE_INI
 
@@ -173,11 +173,13 @@ function init_glance() {
 # install_glanceclient() - Collect source and prepare
 function install_glanceclient() {
     git_clone $GLANCECLIENT_REPO $GLANCECLIENT_DIR $GLANCECLIENT_BRANCH
+    setup_develop $GLANCECLIENT_DIR
 }
 
 # install_glance() - Collect source and prepare
 function install_glance() {
     git_clone $GLANCE_REPO $GLANCE_DIR $GLANCE_BRANCH
+    setup_develop $GLANCE_DIR
 }
 
 # start_glance() - Start running processes, including screen
@@ -197,5 +199,10 @@ function stop_glance() {
     screen -S $SCREEN_NAME -p g-reg -X kill
 }
 
+
 # Restore xtrace
 $XTRACE
+
+# Local variables:
+# mode: shell-script
+# End:

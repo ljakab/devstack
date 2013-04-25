@@ -85,19 +85,71 @@ Example (Qpid):
 
 # Swift
 
-Swift is not installed by default, you can enable easily by adding this to your `localrc`:
+Swift is enabled by default configured with only one replica to avoid being IO/memory intensive on a small vm. When running with only one replica the account, container and object services will run directly in screen. The others services like replicator, updaters or auditor runs in background.
 
-    enable_service swift
+If you would like to disable Swift you can add this to your `localrc` :
+
+    disable_service s-proxy s-object s-container s-account
 
 If you want a minimal Swift install with only Swift and Keystone you can have this instead in your `localrc`:
 
     disable_all_services
-    enable_service key mysql swift
+    enable_service key mysql s-proxy s-object s-container s-account
 
-If you use Swift with Keystone, Swift will authenticate against it. You will need to make sure to use the Keystone URL to auth against.
+If you only want to do some testing of a real normal swift cluster with multiple replicas you can do so by customizing the variable `SWIFT_REPLICAS` in your `localrc` (usually to 3).
+
+# Swift S3
 
 If you are enabling `swift3` in `ENABLED_SERVICES` devstack will install the swift3 middleware emulation. Swift will be configured to act as a S3 endpoint for Keystone so effectively replacing the `nova-objectstore`.
 
 Only Swift proxy server is launched in the screen session all other services are started in background and managed by `swift-init` tool.
 
-By default Swift will configure 3 replicas (and one spare) which could be IO intensive on a small vm, if you only want to do some quick testing of the API you can choose to only have one replica by customizing the variable `SWIFT_REPLICAS` in your `localrc`.
+# Quantum
+
+Basic Setup
+
+In order to enable Quantum a single node setup, you'll need the following settings in your `localrc` :
+
+    disable_service n-net
+    enable_service q-svc
+    enable_service q-agt
+    enable_service q-dhcp
+    enable_service q-l3
+    enable_service q-meta
+    enable_service quantum
+    # Optional, to enable tempest configuration as part of devstack
+    enable_service tempest
+
+Then run `stack.sh` as normal.
+
+# Tempest
+
+If tempest has been successfully configured, a basic set of smoke tests can be run as follows:
+
+    $ cd /opt/stack/tempest
+    $ nosetests tempest/tests/network/test_network_basic_ops.py
+
+# Multi-Node Setup
+
+A more interesting setup involves running multiple compute nodes, with Quantum networks connecting VMs on different compute nodes.
+You should run at least one "controller node", which should have a `stackrc` that includes at least:
+
+    disable_service n-net
+    enable_service q-svc
+    enable_service q-agt
+    enable_service q-dhcp
+    enable_service q-l3
+    enable_service q-meta
+    enable_service quantum
+
+You likely want to change your `localrc` to run a scheduler that will balance VMs across hosts:
+
+    SCHEDULER=nova.scheduler.simple.SimpleScheduler
+
+You can then run many compute nodes, each of which should have a `stackrc` which includes the following, with the IP address of the above controller node:
+
+    ENABLED_SERVICES=n-cpu,rabbit,g-api,quantum,q-agt
+    SERVICE_HOST=[IP of controller node]
+    MYSQL_HOST=$SERVICE_HOST
+    RABBIT_HOST=$SERVICE_HOST
+    Q_HOST=$SERVICE_HOST

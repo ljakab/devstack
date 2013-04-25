@@ -12,11 +12,14 @@
 # developer install.
 
 # To keep this script simple we assume you are running on a recent **Ubuntu**
-# (11.10 Oneiric or newer) or **Fedora** (F16 or newer) machine.  It
+# (12.04 Precise or newer) or **Fedora** (F16 or newer) machine.  It
 # should work in a VM or physical server.  Additionally we put the list of
 # ``apt`` and ``rpm`` dependencies and other configuration files in this repo.
 
 # Learn more and get the most recent version at http://devstack.org
+
+# Make sure custom grep options don't get in the way
+unset GREP_OPTIONS
 
 # Keep track of the devstack directory
 TOP_DIR=$(cd $(dirname "$0") && pwd)
@@ -51,8 +54,8 @@ GetDistro
 # be overwritten by a DevStack update.
 #
 # DevStack distributes ``stackrc`` which contains locations for the OpenStack
-# repositories and branches to configure.  ``stackrc`` sources ``localrc`` to
-# allow you to safely override those settings.
+# repositories, branches to configure, and other configuration defaults.
+# ``stackrc`` sources ``localrc`` to allow you to safely override those settings.
 
 if [[ ! -r $TOP_DIR/stackrc ]]; then
     log_error $LINENO "missing $TOP_DIR/stackrc - did you grab more than just stack.sh?"
@@ -78,6 +81,19 @@ if [[ -r $TOP_DIR/.stackenv ]]; then
     rm $TOP_DIR/.stackenv
 fi
 
+# ``stack.sh`` keeps the list of ``apt`` and ``rpm`` dependencies and config
+# templates and other useful files in the ``files`` subdirectory
+FILES=$TOP_DIR/files
+if [ ! -d $FILES ]; then
+    log_error $LINENO "missing devstack/files"
+fi
+
+# ``stack.sh`` keeps function libraries here
+# Make sure ``$TOP_DIR/lib`` directory is present
+if [ ! -d $TOP_DIR/lib ]; then
+    log_error $LINENO "missing devstack/lib"
+fi
+
 # Import common services (database, message queue) configuration
 source $TOP_DIR/lib/database
 source $TOP_DIR/lib/rpc_backend
@@ -89,7 +105,7 @@ disable_negated_services
 
 # Warn users who aren't on an explicitly supported distro, but allow them to
 # override check and attempt installation with ``FORCE=yes ./stack``
-if [[ ! ${DISTRO} =~ (oneiric|precise|quantal|raring|f16|f17|f18|opensuse-12.2) ]]; then
+if [[ ! ${DISTRO} =~ (oneiric|precise|quantal|raring|f16|f17|f18|opensuse-12.2|rhel6) ]]; then
     echo "WARNING: this script has not been tested on $DISTRO"
     if [[ "$FORCE" != "yes" ]]; then
         die $LINENO "If you wish to run this script anyway run with FORCE=yes"
@@ -100,21 +116,9 @@ fi
 # and the specified rpc backend is available on your platform.
 check_rpc_backend
 
-# ``stack.sh`` keeps function libraries here
-# Make sure ``$TOP_DIR/lib`` directory is present
-if [ ! -d $TOP_DIR/lib ]; then
-    log_error $LINENO "missing devstack/lib"
-fi
-
-# ``stack.sh`` keeps the list of ``apt`` and ``rpm`` dependencies and config
-# templates and other useful files in the ``files`` subdirectory
-FILES=$TOP_DIR/files
-if [ ! -d $FILES ]; then
-    log_error $LINENO "missing devstack/files"
-fi
-
 SCREEN_NAME=${SCREEN_NAME:-stack}
 # Check to see if we are already running DevStack
+# Note that this may fail if USE_SCREEN=False
 if type -p screen >/dev/null && screen -ls | egrep -q "[0-9].$SCREEN_NAME"; then
     echo "You are already running a stack.sh session."
     echo "To rejoin this session type 'screen -x stack'."
@@ -223,31 +227,15 @@ FIXED_RANGE=${FIXED_RANGE:-10.0.0.0/24}
 FIXED_NETWORK_SIZE=${FIXED_NETWORK_SIZE:-256}
 NETWORK_GATEWAY=${NETWORK_GATEWAY:-10.0.0.1}
 
-# Find the interface used for the default route
-HOST_IP_IFACE=${HOST_IP_IFACE:-$(ip route | sed -n '/^default/{ s/.*dev \(\w\+\)\s\+.*/\1/; p; }' | head -1)}
-# Search for an IP unless an explicit is set by ``HOST_IP`` environment variable
-if [ -z "$HOST_IP" -o "$HOST_IP" == "dhcp" ]; then
-    HOST_IP=""
-    HOST_IPS=`LC_ALL=C ip -f inet addr show ${HOST_IP_IFACE} | awk '/inet/ {split($2,parts,"/");  print parts[1]}'`
-    for IP in $HOST_IPS; do
-        # Attempt to filter out IP addresses that are part of the fixed and
-        # floating range. Note that this method only works if the ``netaddr``
-        # python library is installed. If it is not installed, an error
-        # will be printed and the first IP from the interface will be used.
-        # If that is not correct set ``HOST_IP`` in ``localrc`` to the correct
-        # address.
-        if ! (address_in_net $IP $FIXED_RANGE || address_in_net $IP $FLOATING_RANGE); then
-            HOST_IP=$IP
-            break;
-        fi
-    done
-    if [ "$HOST_IP" == "" ]; then
-        die $LINENO "Could not determine host ip address. Either localrc specified dhcp on ${HOST_IP_IFACE} or defaulted"
-    fi
+HOST_IP=$(get_default_host_ip $FIXED_RANGE $FLOATING_RANGE "$HOST_IP_IFACE" "$HOST_IP")
+if [ "$HOST_IP" == "" ]; then
+    die $LINENO "Could not determine host ip address. Either localrc specified dhcp on ${HOST_IP_IFACE} or defaulted"
 fi
 
 # Allow the use of an alternate hostname (such as localhost/127.0.0.1) for service endpoints.
 SERVICE_HOST=${SERVICE_HOST:-$HOST_IP}
+
+# Allow the use of an alternate protocol (such as https) for service endpoints
 SERVICE_PROTOCOL=${SERVICE_PROTOCOL:-http}
 
 # Configure services to use syslog instead of writing to individual log files
@@ -258,7 +246,6 @@ SYSLOG_PORT=${SYSLOG_PORT:-516}
 # Enable sysstat logging
 SYSSTAT_FILE=${SYSSTAT_FILE:-"sysstat.dat"}
 SYSSTAT_INTERVAL=${SYSSTAT_INTERVAL:-"1"}
-
 
 # Use color for logging output (only available if syslog is not used)
 LOG_COLOR=`trueorfalse True $LOG_COLOR`
@@ -285,21 +272,13 @@ source $TOP_DIR/lib/baremetal
 source $TOP_DIR/lib/ldap
 
 # Set the destination directories for OpenStack projects
-HORIZON_DIR=$DEST/horizon
 OPENSTACKCLIENT_DIR=$DEST/python-openstackclient
-NOVNC_DIR=$DEST/noVNC
-SPICE_DIR=$DEST/spice-html5
-SWIFT3_DIR=$DEST/swift3
 
-# Should cinder perform secure deletion of volumes?
-# Defaults to true, can be set to False to avoid this bug when testing:
-# https://bugs.launchpad.net/ubuntu/+source/linux/+bug/1023755
-CINDER_SECURE_DELETE=`trueorfalse True $CINDER_SECURE_DELETE`
 
-# Name of the LVM volume group to use/create for iscsi volumes
-VOLUME_GROUP=${VOLUME_GROUP:-stack-volumes}
-VOLUME_NAME_PREFIX=${VOLUME_NAME_PREFIX:-volume-}
-INSTANCE_NAME_PREFIX=${INSTANCE_NAME_PREFIX:-instance-}
+# Interactive Configuration
+# -------------------------
+
+# Do all interactive config up front before the logging spew begins
 
 # Generic helper to configure passwords
 function read_password {
@@ -344,66 +323,7 @@ function read_password {
 }
 
 
-# Nova Network Configuration
-# --------------------------
-
-# FIXME: more documentation about why these are important options.  Also
-# we should make sure we use the same variable names as the option names.
-
-if [ "$VIRT_DRIVER" = 'xenserver' ]; then
-    PUBLIC_INTERFACE_DEFAULT=eth3
-    # Allow ``build_domU.sh`` to specify the flat network bridge via kernel args
-    FLAT_NETWORK_BRIDGE_DEFAULT=$(grep -o 'flat_network_bridge=[[:alnum:]]*' /proc/cmdline | cut -d= -f 2 | sort -u)
-    GUEST_INTERFACE_DEFAULT=eth1
-elif [ "$VIRT_DRIVER" = 'baremetal' ]; then
-    PUBLIC_INTERFACE_DEFAULT=eth0
-    FLAT_NETWORK_BRIDGE_DEFAULT=br100
-    FLAT_INTERFACE=${FLAT_INTERFACE:-eth0}
-    FORCE_DHCP_RELEASE=${FORCE_DHCP_RELEASE:-False}
-    NET_MAN=${NET_MAN:-FlatManager}
-    STUB_NETWORK=${STUB_NETWORK:-False}
-else
-    PUBLIC_INTERFACE_DEFAULT=br100
-    FLAT_NETWORK_BRIDGE_DEFAULT=br100
-    GUEST_INTERFACE_DEFAULT=eth0
-fi
-
-PUBLIC_INTERFACE=${PUBLIC_INTERFACE:-$PUBLIC_INTERFACE_DEFAULT}
-NET_MAN=${NET_MAN:-FlatDHCPManager}
-EC2_DMZ_HOST=${EC2_DMZ_HOST:-$SERVICE_HOST}
-FLAT_NETWORK_BRIDGE=${FLAT_NETWORK_BRIDGE:-$FLAT_NETWORK_BRIDGE_DEFAULT}
-VLAN_INTERFACE=${VLAN_INTERFACE:-$GUEST_INTERFACE_DEFAULT}
-FORCE_DHCP_RELEASE=${FORCE_DHCP_RELEASE:-True}
-
-# Test floating pool and range are used for testing.  They are defined
-# here until the admin APIs can replace nova-manage
-TEST_FLOATING_POOL=${TEST_FLOATING_POOL:-test}
-TEST_FLOATING_RANGE=${TEST_FLOATING_RANGE:-192.168.253.0/29}
-
-# ``MULTI_HOST`` is a mode where each compute node runs its own network node.  This
-# allows network operations and routing for a VM to occur on the server that is
-# running the VM - removing a SPOF and bandwidth bottleneck.
-MULTI_HOST=`trueorfalse False $MULTI_HOST`
-
-# If you are using the FlatDHCP network mode on multiple hosts, set the
-# ``FLAT_INTERFACE`` variable but make sure that the interface doesn't already
-# have an IP or you risk breaking things.
-#
-# **DHCP Warning**:  If your flat interface device uses DHCP, there will be a
-# hiccup while the network is moved from the flat interface to the flat network
-# bridge.  This will happen when you launch your first instance.  Upon launch
-# you will lose all connectivity to the node, and the VM launch will probably
-# fail.
-#
-# If you are running on a single node and don't need to access the VMs from
-# devices other than that node, you can set ``FLAT_INTERFACE=``
-# This will stop nova from bridging any interfaces into ``FLAT_NETWORK_BRIDGE``.
-FLAT_INTERFACE=${FLAT_INTERFACE-$GUEST_INTERFACE_DEFAULT}
-
-## FIXME(ja): should/can we check that FLAT_INTERFACE is sane?
-
 # Database Configuration
-# ----------------------
 
 # To select between database backends, add the following to ``localrc``:
 #
@@ -416,8 +336,7 @@ FLAT_INTERFACE=${FLAT_INTERFACE-$GUEST_INTERFACE_DEFAULT}
 initialize_database_backends && echo "Using $DATABASE_TYPE database backend" || echo "No database enabled"
 
 
-# RabbitMQ or Qpid
-# --------------------------
+# Queue Configuration
 
 # Rabbit connection info
 if is_service_enabled rabbit; then
@@ -425,53 +344,45 @@ if is_service_enabled rabbit; then
     read_password RABBIT_PASSWORD "ENTER A PASSWORD TO USE FOR RABBIT."
 fi
 
-if is_service_enabled swift; then
-    # If we are using swift3, we can default the s3 port to swift instead
-    # of nova-objectstore
-    if is_service_enabled swift3;then
-        S3_SERVICE_PORT=${S3_SERVICE_PORT:-8080}
+
+# Keystone
+
+if is_service_enabled key; then
+    # The ``SERVICE_TOKEN`` is used to bootstrap the Keystone database.  It is
+    # just a string and is not a 'real' Keystone token.
+    read_password SERVICE_TOKEN "ENTER A SERVICE_TOKEN TO USE FOR THE SERVICE ADMIN TOKEN."
+    # Services authenticate to Identity with servicename/``SERVICE_PASSWORD``
+    read_password SERVICE_PASSWORD "ENTER A SERVICE_PASSWORD TO USE FOR THE SERVICE AUTHENTICATION."
+    # Horizon currently truncates usernames and passwords at 20 characters
+    read_password ADMIN_PASSWORD "ENTER A PASSWORD TO USE FOR HORIZON AND KEYSTONE (20 CHARS OR LESS)."
+
+    # Keystone can now optionally install OpenLDAP by enabling the ``ldap``
+    # service in ``localrc`` (e.g. ``enable_service ldap``).
+    # To clean out the Keystone contents in OpenLDAP set ``KEYSTONE_CLEAR_LDAP``
+    # to ``yes`` (e.g. ``KEYSTONE_CLEAR_LDAP=yes``) in ``localrc``.  To enable the
+    # Keystone Identity Driver (``keystone.identity.backends.ldap.Identity``)
+    # set ``KEYSTONE_IDENTITY_BACKEND`` to ``ldap`` (e.g.
+    # ``KEYSTONE_IDENTITY_BACKEND=ldap``) in ``localrc``.
+
+    # only request ldap password if the service is enabled
+    if is_service_enabled ldap; then
+        read_password LDAP_PASSWORD "ENTER A PASSWORD TO USE FOR LDAP"
     fi
+fi
+
+
+# Swift
+
+if is_service_enabled s-proxy; then
     # We only ask for Swift Hash if we have enabled swift service.
     # ``SWIFT_HASH`` is a random unique string for a swift cluster that
     # can never change.
     read_password SWIFT_HASH "ENTER A RANDOM SWIFT HASH."
 fi
 
-# Set default port for nova-objectstore
-S3_SERVICE_PORT=${S3_SERVICE_PORT:-3333}
 
-
-# Keystone
-# --------
-
-# The ``SERVICE_TOKEN`` is used to bootstrap the Keystone database.  It is
-# just a string and is not a 'real' Keystone token.
-read_password SERVICE_TOKEN "ENTER A SERVICE_TOKEN TO USE FOR THE SERVICE ADMIN TOKEN."
-# Services authenticate to Identity with servicename/``SERVICE_PASSWORD``
-read_password SERVICE_PASSWORD "ENTER A SERVICE_PASSWORD TO USE FOR THE SERVICE AUTHENTICATION."
-# Horizon currently truncates usernames and passwords at 20 characters
-read_password ADMIN_PASSWORD "ENTER A PASSWORD TO USE FOR HORIZON AND KEYSTONE (20 CHARS OR LESS)."
-# Keystone can now optionally install OpenLDAP by adding ldap to the list
-# of enabled services in the localrc file (e.g. ENABLED_SERVICES=key,ldap).
-# If OpenLDAP has already been installed but you need to clear out
-# the Keystone contents of LDAP set KEYSTONE_CLEAR_LDAP to yes
-# (e.g. KEYSTONE_CLEAR_LDAP=yes ) in the localrc file.  To enable the
-# Keystone Identity Driver (keystone.identity.backends.ldap.Identity)
-# set KEYSTONE_IDENTITY_BACKEND to ldap (e.g. KEYSTONE_IDENTITY_BACKEND=ldap)
-# in the localrc file.
-
-
-# only request ldap password if the service is enabled
-if is_service_enabled ldap; then
-    read_password LDAP_PASSWORD "ENTER A PASSWORD TO USE FOR LDAP"
-fi
-
-# Set the tenant for service accounts in Keystone
-SERVICE_TENANT_NAME=${SERVICE_TENANT_NAME:-service}
-
-
-# Log files
-# ---------
+# Configure logging
+# -----------------
 
 # Draw a spinner so the user knows something is happening
 function spinner() {
@@ -524,9 +435,9 @@ if [[ -n "$LOGFILE" ]]; then
     # as the template to search for, appending '.*' to match the date
     # we added on earlier runs.
     LOGDIR=$(dirname "$LOGFILE")
-    LOGNAME=$(basename "$LOGFILE")
+    LOGFILENAME=$(basename "$LOGFILE")
     mkdir -p $LOGDIR
-    find $LOGDIR -maxdepth 1 -name $LOGNAME.\* -mtime +$LOGDAYS -exec rm {} \;
+    find $LOGDIR -maxdepth 1 -name $LOGFILENAME.\* -mtime +$LOGDAYS -exec rm {} \;
     LOGFILE=$LOGFILE.${CURRENT_LOG_TIME}
     SUMFILE=$LOGFILE.${CURRENT_LOG_TIME}.summary
 
@@ -556,8 +467,8 @@ if [[ -n "$LOGFILE" ]]; then
 
     echo_summary "stack.sh log $LOGFILE"
     # Specified logfile name always links to the most recent log
-    ln -sf $LOGFILE $LOGDIR/$LOGNAME
-    ln -sf $SUMFILE $LOGDIR/$LOGNAME.summary
+    ln -sf $LOGFILE $LOGDIR/$LOGFILENAME
+    ln -sf $SUMFILE $LOGDIR/$LOGFILENAME.summary
 else
     # Set up output redirection without log files
     # Copy stdout to fd 3
@@ -627,6 +538,12 @@ source $TOP_DIR/tools/install_prereqs.sh
 
 install_rpc_backend
 
+# a place for distro-specific post-prereq workarounds
+if [[ -f $TOP_DIR/tools/${DISTRO}/post-prereq.sh ]]; then
+    echo_summary "Running ${DISTRO} extra prereq tasks"
+    source $TOP_DIR/tools/${DISTRO}/post-prereq.sh
+fi
+
 if is_service_enabled $DATABASE_BACKENDS; then
     install_database
 fi
@@ -638,7 +555,7 @@ fi
 TRACK_DEPENDS=${TRACK_DEPENDS:-False}
 
 # Install python packages into a virtualenv so that we can track them
-if [[ $TRACK_DEPENDS = True ]] ; then
+if [[ $TRACK_DEPENDS = True ]]; then
     echo_summary "Installing Python packages into a virtualenv $DEST/.venv"
     install_package python-virtualenv
 
@@ -649,124 +566,91 @@ if [[ $TRACK_DEPENDS = True ]] ; then
 fi
 
 
-# Check Out Source
-# ----------------
+# Check Out and Install Source
+# ----------------------------
 
 echo_summary "Installing OpenStack project source"
 
-# Grab clients first
+# Install clients libraries
 install_keystoneclient
 install_glanceclient
+install_cinderclient
 install_novaclient
-# Check out the client libs that are used most
-git_clone $OPENSTACKCLIENT_REPO $OPENSTACKCLIENT_DIR $OPENSTACKCLIENT_BRANCH
-
-# glance, swift middleware and nova api needs keystone middleware
-if is_service_enabled key g-api n-api swift; then
-    # unified auth system (manages accounts/tokens)
-    install_keystone
+if is_service_enabled swift glance; then
+    install_swiftclient
+fi
+if is_service_enabled quantum nova; then
+    install_quantumclient
 fi
 
-if is_service_enabled swift; then
-    install_swiftclient
+git_clone $OPENSTACKCLIENT_REPO $OPENSTACKCLIENT_DIR $OPENSTACKCLIENT_BRANCH
+setup_develop $OPENSTACKCLIENT_DIR
+
+if is_service_enabled key; then
+    install_keystone
+    configure_keystone
+fi
+
+if is_service_enabled s-proxy; then
     install_swift
+    configure_swift
+
     if is_service_enabled swift3; then
         # swift3 middleware to provide S3 emulation to Swift
         git_clone $SWIFT3_REPO $SWIFT3_DIR $SWIFT3_BRANCH
+        setup_develop $SWIFT3_DIR
     fi
 fi
 
 if is_service_enabled g-api n-api; then
     # image catalog service
     install_glance
+    configure_glance
 fi
+
+if is_service_enabled cinder; then
+    install_cinder
+    configure_cinder
+fi
+
+if is_service_enabled quantum; then
+    install_quantum
+    install_quantum_third_party
+fi
+
 if is_service_enabled nova; then
     # compute service
     install_nova
+    cleanup_nova
+    configure_nova
 fi
+
 if is_service_enabled n-novnc; then
     # a websockets/html5 or flash powered VNC console for vm instances
     git_clone $NOVNC_REPO $NOVNC_DIR $NOVNC_BRANCH
 fi
+
 if is_service_enabled n-spice; then
     # a websockets/html5 or flash powered SPICE console for vm instances
     git_clone $SPICE_REPO $SPICE_DIR $SPICE_BRANCH
 fi
+
 if is_service_enabled horizon; then
     # dashboard
     install_horizon
+    configure_horizon
 fi
-if is_service_enabled quantum; then
-    install_quantum
-    install_quantumclient
-    install_quantum_third_party
-fi
-if is_service_enabled heat; then
-    install_heat
-    install_heatclient
-fi
-if is_service_enabled cinder; then
-    install_cinder
-fi
+
 if is_service_enabled ceilometer; then
     install_ceilometerclient
     install_ceilometer
 fi
 
-
-# Initialization
-# ==============
-
-echo_summary "Configuring OpenStack projects"
-
-# Set up our checkouts so they are installed into python path
-# allowing ``import nova`` or ``import glance.client``
-configure_keystoneclient
-configure_novaclient
-setup_develop $OPENSTACKCLIENT_DIR
-if is_service_enabled key g-api n-api swift; then
-    configure_keystone
-fi
-if is_service_enabled swift; then
-    configure_swift
-    configure_swiftclient
-    if is_service_enabled swift3; then
-        setup_develop $SWIFT3_DIR
-    fi
-fi
-if is_service_enabled g-api n-api; then
-    configure_glance
-fi
-
-# Do this _after_ glance is installed to override the old binary
-# TODO(dtroyer): figure out when this is no longer necessary
-configure_glanceclient
-
-if is_service_enabled nova; then
-    configure_nova
-fi
-if is_service_enabled horizon; then
-    configure_horizon
-fi
-if is_service_enabled quantum; then
-    setup_quantumclient
-    setup_quantum
-fi
 if is_service_enabled heat; then
+    install_heat
+    install_heatclient
     configure_heat
     configure_heatclient
-fi
-if is_service_enabled cinder; then
-    configure_cinder
-fi
-
-if [[ $TRACK_DEPENDS = True ]] ; then
-    $DEST/.venv/bin/pip freeze > $DEST/requires-post-pip
-    if ! diff -Nru $DEST/requires-pre-pip $DEST/requires-post-pip > $DEST/requires.diff ; then
-        cat $DEST/requires.diff
-    fi
-    echo "Ran stack.sh in depend tracking mode, bailing out now"
-    exit 0
 fi
 
 if is_service_enabled tls-proxy; then
@@ -776,6 +660,16 @@ if is_service_enabled tls-proxy; then
     # Add name to /etc/hosts
     # don't be naive and add to existing line!
 fi
+
+if [[ $TRACK_DEPENDS = True ]]; then
+    $DEST/.venv/bin/pip freeze > $DEST/requires-post-pip
+    if ! diff -Nru $DEST/requires-pre-pip $DEST/requires-post-pip > $DEST/requires.diff; then
+        cat $DEST/requires.diff
+    fi
+    echo "Ran stack.sh in depend tracking mode, bailing out now"
+    exit 0
+fi
+
 
 # Syslog
 # ------
@@ -816,8 +710,17 @@ fi
 # Configure screen
 # ----------------
 
-if [ -z "$SCREEN_HARDSTATUS" ]; then
-    SCREEN_HARDSTATUS='%{= .} %-Lw%{= .}%> %n%f %t*%{= .}%+Lw%< %-=%{g}(%{d}%H/%l%{g})'
+USE_SCREEN=$(trueorfalse True $USE_SCREEN)
+if [[ "$USE_SCREEN" == "True" ]]; then
+    # Create a new named screen to run processes in
+    screen -d -m -S $SCREEN_NAME -t shell -s /bin/bash
+    sleep 1
+
+    # Set a reasonable status bar
+    if [ -z "$SCREEN_HARDSTATUS" ]; then
+        SCREEN_HARDSTATUS='%{= .} %-Lw%{= .}%> %n%f %t*%{= .}%+Lw%< %-=%{g}(%{d}%H/%l%{g})'
+    fi
+    screen -r $SCREEN_NAME -X hardstatus alwayslastline "$SCREEN_HARDSTATUS"
 fi
 
 # Clear screen rc file
@@ -826,15 +729,9 @@ if [[ -e $SCREENRC ]]; then
     echo -n > $SCREENRC
 fi
 
-# Create a new named screen to run processes in
-screen -d -m -S $SCREEN_NAME -t shell -s /bin/bash
-sleep 1
-
-# Set a reasonable status bar
-screen -r $SCREEN_NAME -X hardstatus alwayslastline "$SCREEN_HARDSTATUS"
-
 # Initialize the directory for service status check
 init_service_check
+
 
 # Kick off Sysstat
 # ------------------------
@@ -847,6 +744,7 @@ if is_service_enabled sysstat;then
         screen_it sysstat "sar $SYSSTAT_INTERVAL"
     fi
 fi
+
 
 # Keystone
 # --------
@@ -907,17 +805,7 @@ fi
 
 if is_service_enabled g-reg; then
     echo_summary "Configuring Glance"
-
     init_glance
-
-    # Store the images in swift if enabled.
-    if is_service_enabled swift; then
-        iniset $GLANCE_API_CONF DEFAULT default_store swift
-        iniset $GLANCE_API_CONF DEFAULT swift_store_auth_address $KEYSTONE_SERVICE_PROTOCOL://$KEYSTONE_SERVICE_HOST:$KEYSTONE_SERVICE_PORT/v2.0/
-        iniset $GLANCE_API_CONF DEFAULT swift_store_user $SERVICE_TENANT_NAME:glance
-        iniset $GLANCE_API_CONF DEFAULT swift_store_key $SERVICE_PASSWORD
-        iniset $GLANCE_API_CONF DEFAULT swift_store_create_container_on_put True
-    fi
 fi
 
 
@@ -970,7 +858,7 @@ fi
 # Storage Service
 # ---------------
 
-if is_service_enabled swift; then
+if is_service_enabled s-proxy; then
     echo_summary "Configuring Swift"
     init_swift
 fi
@@ -996,48 +884,6 @@ if is_service_enabled nova; then
     elif is_service_enabled n-net; then
         create_nova_conf_nova_network
     fi
-    # All nova-compute workers need to know the vnc configuration options
-    # These settings don't hurt anything if n-xvnc and n-novnc are disabled
-    if is_service_enabled n-cpu; then
-        NOVNCPROXY_URL=${NOVNCPROXY_URL:-"http://$SERVICE_HOST:6080/vnc_auto.html"}
-        iniset $NOVA_CONF DEFAULT novncproxy_base_url "$NOVNCPROXY_URL"
-        XVPVNCPROXY_URL=${XVPVNCPROXY_URL:-"http://$SERVICE_HOST:6081/console"}
-        iniset $NOVA_CONF DEFAULT xvpvncproxy_base_url "$XVPVNCPROXY_URL"
-        SPICEHTML5PROXY_URL=${SPICEHTML5PROXY_URL:-"http://$SERVICE_HOST:6082/spice_auto.html"}
-        iniset $NOVA_CONF spice html5proxy_base_url "$SPICEHTML5PROXY_URL"
-    fi
-    if [ "$VIRT_DRIVER" = 'xenserver' ]; then
-        VNCSERVER_PROXYCLIENT_ADDRESS=${VNCSERVER_PROXYCLIENT_ADDRESS=169.254.0.1}
-    else
-        VNCSERVER_PROXYCLIENT_ADDRESS=${VNCSERVER_PROXYCLIENT_ADDRESS=127.0.0.1}
-    fi
-
-    if is_service_enabled n-novnc || is_service_enabled n-xvnc ; then
-      # Address on which instance vncservers will listen on compute hosts.
-      # For multi-host, this should be the management ip of the compute host.
-      VNCSERVER_LISTEN=${VNCSERVER_LISTEN=127.0.0.1}
-      iniset $NOVA_CONF DEFAULT vnc_enabled true
-      iniset $NOVA_CONF DEFAULT vncserver_listen "$VNCSERVER_LISTEN"
-      iniset $NOVA_CONF DEFAULT vncserver_proxyclient_address "$VNCSERVER_PROXYCLIENT_ADDRESS"
-    else
-      iniset $NOVA_CONF DEFAULT vnc_enabled false
-    fi
-
-    if is_service_enabled n-spice; then
-      # Address on which instance spiceservers will listen on compute hosts.
-      # For multi-host, this should be the management ip of the compute host.
-      SPICESERVER_PROXYCLIENT_ADDRESS=${SPICESERVER_PROXYCLIENT_ADDRESS=127.0.0.1}
-      SPICESERVER_LISTEN=${SPICESERVER_LISTEN=127.0.0.1}
-      iniset $NOVA_CONF spice enabled true
-      iniset $NOVA_CONF spice server_listen "$SPICESERVER_LISTEN"
-      iniset $NOVA_CONF spice server_proxyclient_address "$SPICESERVER_PROXYCLIENT_ADDRESS"
-    else
-      iniset $NOVA_CONF spice enabled false
-    fi
-
-    iniset $NOVA_CONF DEFAULT ec2_dmz_host "$EC2_DMZ_HOST"
-    iniset_rpc_backend nova $NOVA_CONF DEFAULT
-    iniset $NOVA_CONF DEFAULT glance_api_servers "$GLANCE_HOSTPORT"
 
 
     # XenServer
@@ -1089,6 +935,25 @@ if is_service_enabled nova; then
            iniset $NOVA_CONF baremetal ${I/=/ }
         done
 
+   # PowerVM
+   # -------
+
+    elif [ "$VIRT_DRIVER" = 'powervm' ]; then
+        echo_summary "Using PowerVM driver"
+        POWERVM_MGR_TYPE=${POWERVM_MGR_TYPE:-"ivm"}
+        POWERVM_MGR_HOST=${POWERVM_MGR_HOST:-"powervm.host"}
+        POWERVM_MGR_USER=${POWERVM_MGR_USER:-"padmin"}
+        POWERVM_MGR_PASSWD=${POWERVM_MGR_PASSWD:-"password"}
+        POWERVM_IMG_REMOTE_PATH=${POWERVM_IMG_REMOTE_PATH:-"/tmp"}
+        POWERVM_IMG_LOCAL_PATH=${POWERVM_IMG_LOCAL_PATH:-"/tmp"}
+        iniset $NOVA_CONF DEFAULT compute_driver nova.virt.powervm.PowerVMDriver
+        iniset $NOVA_CONF DEFAULT powervm_mgr_type $POWERVM_MGR_TYPE
+        iniset $NOVA_CONF DEFAULT powervm_mgr $POWERVM_MGR_HOST
+        iniset $NOVA_CONF DEFAULT powervm_mgr_user $POWERVM_MGR_USER
+        iniset $NOVA_CONF DEFAULT powervm_mgr_passwd $POWERVM_MGR_PASSWD
+        iniset $NOVA_CONF DEFAULT powervm_img_remote_path $POWERVM_IMG_REMOTE_PATH
+        iniset $NOVA_CONF DEFAULT powervm_img_local_path $POWERVM_IMG_LOCAL_PATH
+
     # Default
     # -------
 
@@ -1110,13 +975,14 @@ if is_service_enabled nova && is_baremetal; then
     fi
 fi
 
+
 # Launch Services
 # ===============
 
 # Only run the services specified in ``ENABLED_SERVICES``
 
 # Launch Swift Services
-if is_service_enabled swift; then
+if is_service_enabled s-proxy; then
     echo_summary "Starting Swift"
     start_swift
 fi
@@ -1139,7 +1005,10 @@ if is_service_enabled key && is_service_enabled swift3 && is_service_enabled nov
     iniset $NOVA_CONF DEFAULT s3_affix_tenant "True"
 fi
 
-screen_it zeromq "cd $NOVA_DIR && $NOVA_BIN_DIR/nova-rpc-zmq-receiver"
+if is_service_enabled zeromq; then
+    echo_summary "Starting zermomq receiver"
+    screen_it zeromq "cd $NOVA_DIR && $NOVA_BIN_DIR/nova-rpc-zmq-receiver"
+fi
 
 # Launch the nova-api and wait for it to answer before continuing
 if is_service_enabled n-api; then
@@ -1184,12 +1053,6 @@ if is_service_enabled ceilometer; then
     start_ceilometer
 fi
 
-# Starting the nova-objectstore only if swift3 service is not enabled.
-# Swift will act as s3 objectstore.
-is_service_enabled swift3 || \
-    screen_it n-obj "cd $NOVA_DIR && $NOVA_BIN_DIR/nova-objectstore"
-
-
 # Configure and launch heat engine, api and metadata
 if is_service_enabled heat; then
     # Initialize heat, including replacing nova flavors
@@ -1198,6 +1061,7 @@ if is_service_enabled heat; then
     echo_summary "Starting Heat"
     start_heat
 fi
+
 
 # Create account rc files
 # =======================
@@ -1308,6 +1172,7 @@ fi
 
 # Check the status of running services
 service_check
+
 
 # Fin
 # ===

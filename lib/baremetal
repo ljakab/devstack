@@ -33,7 +33,7 @@
 # baremetal driver uses that to push a disk image onto the node(s).
 #
 # Below we define various defaults which control the behavior of the
-# baremetal compute service, and inform it of the hardware it will contorl.
+# baremetal compute service, and inform it of the hardware it will control.
 #
 # Below that, various functions are defined, which are called by devstack
 # in the following order:
@@ -52,6 +52,7 @@
 # Save trace setting
 XTRACE=$(set +o | grep xtrace)
 set +o xtrace
+
 
 # Sub-driver settings
 # -------------------
@@ -395,7 +396,7 @@ function upload_baremetal_image() {
        ${KERNEL_ID:+--property kernel_id=$KERNEL_ID} \
        ${RAMDISK_ID:+--property ramdisk_id=$RAMDISK_ID} < "${IMAGE}"
 
-    # override DEFAULT_IMAGE_NAME so that tempest can find the image 
+    # override DEFAULT_IMAGE_NAME so that tempest can find the image
     # that we just uploaded in glance
     DEFAULT_IMAGE_NAME="${IMAGE_NAME%.img}"
 }
@@ -427,10 +428,14 @@ function add_baremetal_node() {
        "$mac_1" \
        | grep ' id ' | get_field 2 )
     [ $? -eq 0 ] || [ "$id" ] || die "Error adding baremetal node"
-    id2=$(nova baremetal-add-interface "$id" "$mac_2" )
+    id2=$(nova baremetal-interface-add "$id" "$mac_2" )
     [ $? -eq 0 ] || [ "$id2" ] || die "Error adding interface to barmetal node $id"
 }
 
 
 # Restore xtrace
 $XTRACE
+
+# Local variables:
+# mode: shell-script
+# End:

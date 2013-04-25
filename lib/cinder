@@ -53,11 +53,20 @@ fi
 # Support for multi lvm backend configuration (default is no support)
 CINDER_MULTI_LVM_BACKEND=$(trueorfalse False $CINDER_MULTI_LVM_BACKEND)
 
+# Should cinder perform secure deletion of volumes?
+# Defaults to true, can be set to False to avoid this bug when testing:
+# https://bugs.launchpad.net/ubuntu/+source/linux/+bug/1023755
+CINDER_SECURE_DELETE=`trueorfalse True $CINDER_SECURE_DELETE`
+
 # Name of the lvm volume groups to use/create for iscsi volumes
 # VOLUME_GROUP2 is used only if CINDER_MULTI_LVM_BACKEND = True
 VOLUME_GROUP=${VOLUME_GROUP:-stack-volumes}
 VOLUME_GROUP2=${VOLUME_GROUP2:-stack-volumes2}
 VOLUME_NAME_PREFIX=${VOLUME_NAME_PREFIX:-volume-}
+
+
+# Functions
+# ---------
 
 # _clean_volume_group removes all cinder volumes from the specified volume group
 # _clean_volume_group $VOLUME_GROUP $VOLUME_NAME_PREFIX
@@ -118,9 +127,6 @@ function cleanup_cinder() {
 
 # configure_cinder() - Set config files, create data dirs, etc
 function configure_cinder() {
-    setup_develop $CINDER_DIR
-    setup_develop $CINDERCLIENT_DIR
-
     if [[ ! -d $CINDER_CONF_DIR ]]; then
         sudo mkdir -p $CINDER_CONF_DIR
     fi
@@ -171,6 +177,7 @@ function configure_cinder() {
 
     cp $CINDER_DIR/etc/cinder/cinder.conf.sample $CINDER_CONF
     iniset $CINDER_CONF DEFAULT auth_strategy keystone
+    iniset $CINDER_CONF DEFAULT debug True
     iniset $CINDER_CONF DEFAULT verbose True
     if [ "$CINDER_MULTI_LVM_BACKEND" = "True" ]; then
         iniset $CINDER_CONF DEFAULT enabled_backends lvmdriver-1,lvmdriver-2
@@ -185,9 +192,7 @@ function configure_cinder() {
         iniset $CINDER_CONF DEFAULT volume_name_template ${VOLUME_NAME_PREFIX}%s
     fi
     iniset $CINDER_CONF DEFAULT iscsi_helper tgtadm
-    local dburl
-    database_connection_url dburl cinder
-    iniset $CINDER_CONF DEFAULT sql_connection $dburl
+    iniset $CINDER_CONF DEFAULT sql_connection `database_connection_url cinder`
     iniset $CINDER_CONF DEFAULT api_paste_config $CINDER_API_PASTE_INI
     iniset $CINDER_CONF DEFAULT rootwrap_config "$CINDER_CONF_DIR/rootwrap.conf"
     iniset $CINDER_CONF DEFAULT osapi_volume_extension cinder.api.contrib.standard_extensions
@@ -229,6 +234,19 @@ function configure_cinder() {
         )
     elif [ "$CINDER_DRIVER" == "sheepdog" ]; then
         iniset $CINDER_CONF DEFAULT volume_driver "cinder.volume.drivers.sheepdog.SheepdogDriver"
+    elif [ "$CINDER_DRIVER" == "glusterfs" ]; then
+        # To use glusterfs, set the following in localrc:
+        # CINDER_DRIVER=glusterfs
+        # CINDER_GLUSTERFS_SHARES="127.0.0.1:/vol1;127.0.0.1:/vol2"
+        # Shares are <host>:<volume> and separated by semicolons.
+
+        iniset $CINDER_CONF DEFAULT volume_driver "cinder.volume.drivers.glusterfs.GlusterfsDriver"
+        iniset $CINDER_CONF DEFAULT glusterfs_shares_config "$CINDER_CONF_DIR/glusterfs_shares"
+        touch $CINDER_CONF_DIR/glusterfs_shares
+        if [ ! -z "$CINDER_GLUSTERFS_SHARES" ]; then
+            CINDER_GLUSTERFS_SHARES=$(echo $CINDER_GLUSTERFS_SHARES | tr ";" "\n")
+            echo "$CINDER_GLUSTERFS_SHARES" > $CINDER_CONF_DIR/glusterfs_shares
+        fi
     fi
 }
 
@@ -363,24 +381,29 @@ function init_cinder() {
 # install_cinder() - Collect source and prepare
 function install_cinder() {
     git_clone $CINDER_REPO $CINDER_DIR $CINDER_BRANCH
-    git_clone $CINDERCLIENT_REPO $CINDERCLIENT_DIR $CINDERCLIENT_BRANCH
+    setup_develop $CINDER_DIR
 }
 
-# apply config.d approach (e.g. Oneiric does not have this)
+# install_cinderclient() - Collect source and prepare
+function install_cinderclient() {
+    git_clone $CINDERCLIENT_REPO $CINDERCLIENT_DIR $CINDERCLIENT_BRANCH
+    setup_develop $CINDERCLIENT_DIR
+}
+
+# apply config.d approach for cinder volumes directory
 function _configure_tgt_for_config_d() {
-    if [[ ! -d /etc/tgt/conf.d/ ]]; then
-        sudo mkdir -p /etc/tgt/conf.d
-        echo "include /etc/tgt/conf.d/*.conf" | sudo tee -a /etc/tgt/targets.conf
+    if [[ ! -d /etc/tgt/stack.d/ ]]; then
+        sudo ln -sf $CINDER_STATE_PATH/volumes /etc/tgt/stack.d
+        echo "include /etc/tgt/stack.d/*" | sudo tee -a /etc/tgt/targets.conf
     fi
 }
 
 # start_cinder() - Start running processes, including screen
 function start_cinder() {
     if is_service_enabled c-vol; then
+        # Delete any old stack.conf
+        sudo rm -f /etc/tgt/conf.d/stack.conf
         _configure_tgt_for_config_d
-        if [[ ! -f /etc/tgt/conf.d/stack.conf ]]; then
-            echo "include $CINDER_STATE_PATH/volumes/*" | sudo tee /etc/tgt/conf.d/stack.conf
-        fi
         if is_ubuntu; then
             # tgt in oneiric doesn't restart properly if tgtd isn't running
             # do it in two steps
@@ -425,5 +448,10 @@ function stop_cinder() {
     fi
 }
 
+
 # Restore xtrace
 $XTRACE
+
+# Local variables:
+# mode: shell-script
+# End:

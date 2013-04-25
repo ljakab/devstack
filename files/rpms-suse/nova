@@ -3,6 +3,7 @@ curl
 dnsmasq
 ebtables
 gawk
+genisoimage # required for config_drive
 iptables
 iputils
 kpartx
@@ -14,6 +15,7 @@ libvirt-python
 libxml2-python
 mysql-community-server # NOPRIME
 parted
+polkit
 python-M2Crypto
 python-m2crypto # dist:sle11sp2
 python-Paste
@@ -34,6 +36,7 @@ python-lxml # needed for glance which is needed for nova --- this shouldn't be h
 python-mox
 python-mysql
 python-netaddr
+python-numpy # needed by websockify for spice console
 python-paramiko
 python-python-gflags
 python-sqlalchemy-migrate

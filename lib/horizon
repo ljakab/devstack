@@ -29,11 +29,37 @@ set +o xtrace
 # Set up default directories
 HORIZON_DIR=$DEST/horizon
 
+# local_settings.py is used to customize Dashboard settings.
+# The example file in Horizon repo is used by default.
+HORIZON_SETTINGS=${HORIZON_SETTINGS:-$HORIZON_DIR/openstack_dashboard/local/local_settings.py.example}
+
 # Allow overriding the default Apache user and group, default to
 # current user and his default group.
 APACHE_USER=${APACHE_USER:-$USER}
 APACHE_GROUP=${APACHE_GROUP:-$(id -gn $APACHE_USER)}
 
+
+# Functions
+# ---------
+
+# utility method of setting python option
+function _horizon_config_set() {
+    local file=$1
+    local section=$2
+    local option=$3
+    local value=$4
+
+    if grep -q "^$section" $file; then
+        line=$(sed -ne "/^$section/,/^}/ { /^ *'$option':/ p; }" $file)
+        if [ -n "$line" ]; then
+            sed -i -e "/^$section/,/^}/ s/^\( *'$option'\) *:.*$/\1: $value,/" $file
+        else
+            sed -i -e "/^$section/ a\n    '$option': $value,\n" $file
+        fi
+    else
+        echo -e "\n\n$section = {\n    '$option': $value,\n}" >> $file
+    fi
+}
 
 # Entry Points
 # ------------
@@ -59,7 +85,12 @@ function init_horizon() {
 
     # ``local_settings.py`` is used to override horizon default settings.
     local_settings=$HORIZON_DIR/openstack_dashboard/local/local_settings.py
-    cp $FILES/horizon_settings.py $local_settings
+    cp $HORIZON_SETTINGS $local_settings
+
+    # enable loadbalancer dashboard in case service is enabled
+    if is_service_enabled q-lbaas; then
+        _horizon_config_set $local_settings OPENSTACK_QUANTUM_NETWORK enable_lb True
+    fi
 
     # Initialize the horizon database (it stores sessions and notices shown to
     # users).  The user system is external (keystone).
@@ -71,6 +102,7 @@ function init_horizon() {
     sudo mkdir -p $HORIZON_DIR/.blackhole
 
 
+    HORIZON_REQUIRE=''
     if is_ubuntu; then
         APACHE_NAME=apache2
         APACHE_CONF=sites-available/horizon
@@ -84,6 +116,12 @@ function init_horizon() {
     elif is_fedora; then
         APACHE_NAME=httpd
         APACHE_CONF=conf.d/horizon.conf
+
+        if [[ "$os_RELEASE" -ge "18" ]]; then
+            # fedora 18 has Require all denied  in its httpd.conf
+            # and requires explicit Require all granted
+            HORIZON_REQUIRE='Require all granted'
+        fi
         sudo sed '/^Listen/s/^.*$/Listen 0.0.0.0:80/' -i /etc/httpd/conf/httpd.conf
     elif is_suse; then
         APACHE_NAME=apache2
@@ -101,6 +139,7 @@ function init_horizon() {
         s,%HORIZON_DIR%,$HORIZON_DIR,g;
         s,%APACHE_NAME%,$APACHE_NAME,g;
         s,%DEST%,$DEST,g;
+        s,%HORIZON_REQUIRE%,$HORIZON_REQUIRE,g;
     \" $FILES/apache-horizon.template >/etc/$APACHE_NAME/$APACHE_CONF"
 
 }
@@ -125,6 +164,9 @@ function install_horizon() {
         if [[ ! -e "/usr/bin/node" ]]; then
             install_package nodejs-legacy
         fi
+    elif is_fedora && [[ "$os_RELEASE" -ge "18" ]]; then
+        # fedora 18 and higher gets nodejs
+        install_package nodejs
     fi
 
     git_clone $HORIZON_REPO $HORIZON_DIR $HORIZON_BRANCH $HORIZON_TAG
@@ -151,3 +193,7 @@ function stop_horizon() {
 
 # Restore xtrace
 $XTRACE
+
+# Local variables:
+# mode: shell-script
+# End:

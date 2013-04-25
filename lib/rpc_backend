@@ -17,8 +17,9 @@
 XTRACE=$(set +o | grep xtrace)
 set +o xtrace
 
-# Entry Points
-# ------------
+
+# Functions
+# ---------
 
 # Make sure we only have one rpc backend enabled.
 # Also check the specified rpc backend is available on your platform.
@@ -40,6 +41,38 @@ function check_rpc_backend() {
 
     if is_service_enabled qpid && ! qpid_is_supported; then
         die $LINENO "Qpid support is not available for this version of your distribution."
+    fi
+}
+
+# clean up after rpc backend - eradicate all traces so changing backends
+# produces a clean switch
+function cleanup_rpc_backend {
+    if is_service_enabled rabbit; then
+        # Obliterate rabbitmq-server
+        uninstall_package rabbitmq-server
+        sudo killall epmd
+        if is_ubuntu; then
+            # And the Erlang runtime too
+            sudo aptitude purge -y ~nerlang
+        fi
+    elif is_service_enabled qpid; then
+        if is_fedora; then
+            uninstall_package qpid-cpp-server-daemon
+        elif is_ubuntu; then
+            uninstall_package qpidd
+        else
+            exit_distro_not_supported "qpid installation"
+        fi
+    elif is_service_enabled zeromq; then
+        if is_fedora; then
+            uninstall_package zeromq python-zmq
+        elif is_ubuntu; then
+            uninstall_package libzmq1 python-zmq
+        elif is_suse; then
+            uninstall_package libzmq1 python-pyzmq
+        else
+            exit_distro_not_supported "zeromq installation"
+        fi
     fi
 }
 
@@ -125,5 +158,10 @@ function qpid_is_supported() {
     ( ! ([[ "$DISTRO" = "oneiric" ]] || is_suse) )
 }
 
+
 # Restore xtrace
 $XTRACE
+
+# Local variables:
+# mode: shell-script
+# End:

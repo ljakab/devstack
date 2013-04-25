@@ -9,7 +9,7 @@ source $TOP_DIR/lib/quantum_plugins/ovs_base
 source $TOP_DIR/lib/quantum_thirdparty/bigswitch_floodlight     # for third party service specific configuration values
 
 function quantum_plugin_create_nova_conf() {
-    NOVA_VIF_DRIVER=${NOVA_VIF_DRIVER:-"nova.virt.libvirt.vif.LibvirtHybridOVSBridgeDriver"}
+    NOVA_VIF_DRIVER=${NOVA_VIF_DRIVER:-"nova.virt.libvirt.vif.LibvirtGenericVIFDriver"}
 }
 
 function quantum_plugin_install_agent_packages() {
@@ -49,6 +49,11 @@ function quantum_plugin_configure_service() {
 function quantum_plugin_setup_interface_driver() {
     local conf_file=$1
     iniset $conf_file DEFAULT interface_driver quantum.agent.linux.interface.OVSInterfaceDriver
+}
+
+function has_quantum_plugin_security_group() {
+    # 1 means False here
+    return 1
 }
 
 # Restore xtrace

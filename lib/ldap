@@ -1,12 +1,16 @@
 # lib/ldap
 # Functions to control the installation and configuration of **ldap**
 
-# ``stack.sh`` calls the entry points in this order:
-#
+# ``lib/keystone`` calls the entry points in this order:
+# install_ldap()
 
 # Save trace setting
 XTRACE=$(set +o | grep xtrace)
 set +o xtrace
+
+
+# Functions
+# ---------
 
 # install_ldap
 # install_ldap() - Collect source and prepare
@@ -16,13 +20,11 @@ function install_ldap() {
     echo "os_VENDOR is $os_VENDOR"
     printf "installing"
     if is_ubuntu; then
-        echo "os vendor is Ubuntu"
         LDAP_OLCDB_NUMBER=1
         LDAP_ROOTPW_COMMAND=replace
         sudo DEBIAN_FRONTEND=noninteractive apt-get install slapd ldap-utils
         #automatically starts LDAP on ubuntu so no need to call start_ldap
-    elif is_fedora; then
-        echo "os vendor is Fedora"
+    elif is_fedora || is_suse; then
         LDAP_OLCDB_NUMBER=2
         LDAP_ROOTPW_COMMAND=add
         start_ldap
@@ -39,8 +41,14 @@ function install_ldap() {
     #update ldap olcdb
     sudo ldapmodify -Y EXTERNAL -H ldapi:/// -f $TMP_MGR_DIFF_FILE
 
+    # On fedora we need to manually add cosine and inetorgperson schemas
+    if is_fedora; then
+        sudo ldapadd -Y EXTERNAL -H ldapi:/// -f /etc/openldap/schema/cosine.ldif
+        sudo ldapadd -Y EXTERNAL -H ldapi:/// -f /etc/openldap/schema/inetorgperson.ldif
+    fi
+
     # add our top level ldap nodes
-    if ldapsearch -x -w $LDAP_PASSWORD -H ldap://localhost -D dc=Manager,dc=openstack,dc=org -x -b dc=openstack,dc=org | grep -q "Success" ; then
+    if ldapsearch -x -w $LDAP_PASSWORD -H ldap://localhost -D dc=Manager,dc=openstack,dc=org -x -b dc=openstack,dc=org | grep -q "Success"; then
         printf "LDAP already configured for OpenStack\n"
         if [[ "$KEYSTONE_CLEAR_LDAP" == "yes" ]]; then
             # clear LDAP state
@@ -72,3 +80,7 @@ function clear_ldap_state() {
 
 # Restore xtrace
 $XTRACE
+
+# Local variables:
+# mode: shell-script
+# End:
