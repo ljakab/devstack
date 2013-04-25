@@ -147,6 +147,10 @@ HEATCLIENT_BRANCH=${HEATCLIENT_BRANCH:-master}
 RYU_REPO=${RYU_REPO:-${GIT_BASE}/osrg/ryu.git}
 RYU_BRANCH=${RYU_BRANCH:-master}
 
+# OpenDaylight
+ODL_REPO=${ODL_REPO:-http://git.opendaylight.org/gerrit/p/controller.git}
+ODL_BRANCH=${ODL_BRANCH:-master}
+
 # diskimage-builder
 BM_IMAGE_BUILD_REPO=${BM_IMAGE_BUILD_REPO:-${GIT_BASE}/stackforge/diskimage-builder.git}
 BM_IMAGE_BUILD_BRANCH=${BM_IMAGE_BUILD_BRANCH:-master}

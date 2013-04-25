@@ -1,0 +1,50 @@
+# OpenDaylight OpenFlow Controller
+# -----------------------
+
+# Save trace setting
+MY_XTRACE=$(set +o | grep xtrace)
+set +o xtrace
+
+ODL_DIR=$DEST/odl
+# ODL Controllers
+ODL_CONTROLLERS=${ODL_CONTROLLERS:-localhost:8080:admin:admin}
+
+# Restore xtrace
+$MY_XTRACE
+
+function install_odl() {
+    local _pwd=$(pwd)
+
+    if is_ubuntu; then
+        install_package maven openjdk-7-jre openjdk-7-jdk 
+    else
+        yum_install maven java-1.7.0-openjdk
+    fi
+
+    git_clone $ODL_REPO $ODL_DIR $ODL_BRANCH
+    cd $ODL_DIR/opendaylight/distribution/opendaylight/
+    mvn clean install
+    cd $_pwd
+}
+
+function configure_odl() {
+    :
+}
+
+function init_odl() {
+    :
+}
+
+function start_odl() {
+    if is_ubuntu; then
+        JHOME=/usr/lib/jvm/java-1.7.0-openjdk-amd64
+    else
+        JHOME=/usr/lib/jvm/java-1.7.0-openjdk.x86_64
+    fi
+    screen_it odl "cd $ODL_DIR/opendaylight/distribution/opendaylight/target/distribution.opendaylight-0.1.0-SNAPSHOT-osgipackage/opendaylight && JAVA_HOME=$JHOME ./run.sh"
+}
+
+function stop_odl() {
+    :
+}
+
