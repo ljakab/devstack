@@ -42,6 +42,7 @@ function quantum_plugin_configure_plugin_agent() {
     _quantum_ovs_base_setup_bridge $OVS_BRIDGE
     iniset /$Q_PLUGIN_CONF_FILE ODL controllers $ODL_CONTROLLERS
     iniset /$Q_PLUGIN_CONF_FILE ODL integration_bridge $OVS_BRIDGE
+    iniset /$Q_PLUGIN_CONF_FILE ODL tunnel_bridge $ODL_TUNNEL_BRIDGE
     iniset /$Q_PLUGIN_CONF_FILE ODL tenant_network_type $ODL_TENANT_NETWORK_TYPE
     iniset /$Q_PLUGIN_CONF_FILE ODL int_peer_patch_port $ODL_INT_PEER_PATCH_PORT
     iniset /$Q_PLUGIN_CONF_FILE ODL tun_peer_patch_port $ODL_TUN_PEER_PATCH_PORT
