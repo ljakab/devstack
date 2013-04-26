@@ -18,9 +18,9 @@ function quantum_plugin_install_agent_packages() {
 }
 
 function quantum_plugin_configure_common() {
-    Q_PLUGIN_CONF_PATH=etc/quantum/plugins/odl
-    Q_PLUGIN_CONF_FILENAME=odl.ini
-    Q_DB_NAME="ovs_quantum"
+    Q_PLUGIN_CONF_PATH=etc/quantum/plugins/opendaylight
+    Q_PLUGIN_CONF_FILENAME=odl_quantum_plugin.ini
+    Q_DB_NAME="odl_quantum"
     Q_PLUGIN_CLASS="quantum.plugins.opendaylight.odl_quantum_plugin.ODLQuantumPlugin"
 }
 
@@ -42,6 +42,12 @@ function quantum_plugin_configure_plugin_agent() {
     _quantum_ovs_base_setup_bridge $OVS_BRIDGE
     iniset /$Q_PLUGIN_CONF_FILE ODL controllers $ODL_CONTROLLERS
     iniset /$Q_PLUGIN_CONF_FILE ODL integration_bridge $OVS_BRIDGE
+    iniset /$Q_PLUGIN_CONF_FILE ODL tenant_network_type $ODL_TENANT_NETWORK_TYPE
+    iniset /$Q_PLUGIN_CONF_FILE ODL int_peer_patch_port $ODL_INT_PEER_PATCH_PORT
+    iniset /$Q_PLUGIN_CONF_FILE ODL tun_peer_patch_port $ODL_TUN_PEER_PATCH_PORT
+    iniset /$Q_PLUGIN_CONF_FILE ODL tunnel_id_ranges $ODL_TUN_ID_RANGE
+    iniset /$Q_PLUGIN_CONF_FILE ODL network_vlan_ranges $ODL_NETWORK_VLAN_RANGE
+
     AGENT_BINARY="$QUANTUM_DIR/quantum/plugins/opendaylight/agent/odl_quantum_agent.py"
 
     _quantum_ovs_base_configure_firewall_driver
