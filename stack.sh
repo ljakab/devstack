@@ -525,7 +525,6 @@ failed() {
 # an error.  It is also useful for following along as the install occurs.
 set -o xtrace
 
-
 # Install Packages
 # ================
 
@@ -538,18 +537,48 @@ source $TOP_DIR/tools/install_prereqs.sh
 
 install_rpc_backend
 
-# a place for distro-specific post-prereq workarounds
-if [[ -f $TOP_DIR/tools/${DISTRO}/post-prereq.sh ]]; then
-    echo_summary "Running ${DISTRO} extra prereq tasks"
-    source $TOP_DIR/tools/${DISTRO}/post-prereq.sh
-fi
-
 if is_service_enabled $DATABASE_BACKENDS; then
     install_database
 fi
 
 if is_service_enabled q-agt; then
     install_quantum_agent_packages
+fi
+
+#
+# System-specific preconfigure
+# ============================
+
+if [[ is_fedora && $DISTRO =~ (rhel6) ]]; then
+    # An old version (2.0.1) of python-crypto is probably installed on
+    # a fresh system, via the dependency chain
+    # cas->python-paramiko->python-crypto (related to anaconda).
+    # Unfortunately, "pip uninstall pycrypto" will remove the
+    # .egg-info file for this rpm-installed version, but leave most of
+    # the actual library files behind in /usr/lib64/python2.6/Crypto.
+    # When later "pip install pycrypto" happens, the built library
+    # will be installed over these existing files; the result is a
+    # useless mess of old, rpm-packaged files and pip-installed files.
+    # Unsurprisingly, the end result is it doesn't work.  Thus we have
+    # to get rid of it now so that any packages that pip-install
+    # pycrypto get a "clean slate".
+    # (note, we have to be careful about other RPM packages specified
+    # pulling in python-crypto as well.  That's why RHEL6 doesn't
+    # install python-paramiko packages for example...)
+    uninstall_package python-crypto
+
+    # A similar thing happens for python-lxml (a dependency of
+    # ipa-client, an auditing thing we don't care about).  We have the
+    # build-dependencies the lxml pip-install will need (gcc,
+    # libxml2-dev & libxslt-dev) in the "general" rpm lists
+    uninstall_package python-lxml
+
+    # If the dbus rpm was installed by the devstack rpm dependencies
+    # then you may hit a bug where the uuid isn't generated because
+    # the service was never started (PR#598200), causing issues for
+    # Nova stopping later on complaining that
+    # '/var/lib/dbus/machine-id' doesn't exist.
+    sudo service messagebus restart
 fi
 
 TRACK_DEPENDS=${TRACK_DEPENDS:-False}
@@ -564,7 +593,6 @@ if [[ $TRACK_DEPENDS = True ]]; then
     source $DEST/.venv/bin/activate
     $DEST/.venv/bin/pip freeze > $DEST/requires-pre-pip
 fi
-
 
 # Check Out and Install Source
 # ----------------------------
@@ -595,8 +623,10 @@ if is_service_enabled s-proxy; then
     install_swift
     configure_swift
 
+    # swift3 middleware to provide S3 emulation to Swift
     if is_service_enabled swift3; then
-        # swift3 middleware to provide S3 emulation to Swift
+        # replace the nova-objectstore port by the swift port
+        S3_SERVICE_PORT=8080
         git_clone $SWIFT3_REPO $SWIFT3_DIR $SWIFT3_BRANCH
         setup_develop $SWIFT3_DIR
     fi
@@ -649,6 +679,7 @@ fi
 if is_service_enabled heat; then
     install_heat
     install_heatclient
+    cleanup_heat
     configure_heat
     configure_heatclient
 fi
@@ -953,6 +984,18 @@ if is_service_enabled nova; then
         iniset $NOVA_CONF DEFAULT powervm_mgr_passwd $POWERVM_MGR_PASSWD
         iniset $NOVA_CONF DEFAULT powervm_img_remote_path $POWERVM_IMG_REMOTE_PATH
         iniset $NOVA_CONF DEFAULT powervm_img_local_path $POWERVM_IMG_LOCAL_PATH
+
+    # vSphere API
+    # -------
+
+    elif [ "$VIRT_DRIVER" = 'vsphere' ]; then
+        echo_summary "Using VMware vCenter driver"
+        iniset $NOVA_CONF DEFAULT compute_driver "vmwareapi.VMwareVCDriver"
+        VMWAREAPI_USER=${VMWAREAPI_USER:-"root"}
+        iniset $NOVA_CONF DEFAULT vmwareapi_host_ip "$VMWAREAPI_IP"
+        iniset $NOVA_CONF DEFAULT vmwareapi_host_username "$VMWAREAPI_USER"
+        iniset $NOVA_CONF DEFAULT vmwareapi_host_password "$VMWAREAPI_PASSWORD"
+        iniset $NOVA_CONF DEFAULT vmwareapi_cluster_name "$VMWAREAPI_CLUSTER"
 
     # Default
     # -------
