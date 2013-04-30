@@ -21,8 +21,6 @@
         AllowOverride None
         Order allow,deny
         allow from all
-	Options +ExecCGI
-	Require all granted
     </Directory>
 
     ErrorLog /var/log/%APACHE_NAME%/horizon_error.log
