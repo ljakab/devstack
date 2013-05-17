@@ -13,21 +13,39 @@ Q_CISCO_PLUGIN_TAP_VSM_IP=${Q_CISCO_PLUGIN_TAP_VSM_IP:-172.16.1.225/28}
 Q_CISCO_PLUGIN_VSM_ISO_IMAGE=${Q_CISCO_PLUGIN_VSM_ISO_IMAGE:-}
 # Scecify the VSM parameters
 Q_CISCO_PLUGIN_VSM_IP=${Q_CISCO_PLUGIN_VSM_IP:-172.16.1.25}
+# Specify the VSM username
 Q_CISCO_PLUGIN_VSM_USERNAME=${Q_CISCO_PLUGIN_VSM_USERNAME:-admin}
+# Specify the VSM passward for above username
 Q_CISCO_PLUGIN_VSM_PASSWORD=${Q_CISCO_PLUGIN_VSM_PASSWORD:-Sfish123}
-Q_CISCO_PLUGIN_VSM_MGMT_INTF=${Q_CISCO_PLUGIN_VSM_MGMT_INTF:-eth1}
+# Specify the uVEM image/module
 Q_CISCO_PLUGIN_UVEM_DEB_IMAGE=${Q_CISCO_PLUGIN_UVEM_DEB_IMAGE:-}
-Q_CISCO_PLUGIN_UVEM_OVS_BRNAME=${Q_CISCO_PLUGIN_UVEM_OVS_BRNAME:-br-int}
+# Specify the management interface between the hosts. With this, the VSM can talk
+# to all the other compute nodes (uVEMs)
+Q_CISCO_PLUGIN_MGMT_INTERFACE=${Q_CISCO_PLUGIN_MGMT_INTERFACE:-}
+# Specify the uVEM integration bridge name
+Q_CISCO_PLUGIN_INTEGRATION_BRIDGE=${Q_CISCO_PLUGIN_INTEGRATION_BRIDGE:-br-int}
 
+Q_CISCO_PLUGIN_VSM_MGMT_INTF=${Q_CISCO_PLUGIN_VSM_MGMT_INTF:-eth1}
+# Specify is tunneling is enabled
+Q_CISCO_PLUGIN_ENABLE_TUNNELING=${Q_CISCO_PLUGIN_ENABLE_TUNNELING:-True}
+# Specify the VXLAN range
+Q_CISCO_PLUGIN_VXLAN_ID_RANGES=${Q_CISCO_PLUGIN_VXLAN_ID_RANGES:-5000:10000}
+# Specify the VLAN range
+Q_CISCO_PLUGIN_VLAN_RANGES=${Q_CISCO_PLUGIN_VLAN_RANGES:-vlan:1:4095}
+# Specify if VSM should be restarted
+Q_CISCO_PLUGIN_RESTART_VSM=${Q_CISCO_PLUGIN_RESTART_VSM:-no}
+
+# Specify ncclient package information
 NCCLIENT_DIR=$DEST/ncclient
 NCCLIENT_VERSION=${NCCLIENT_VERSION:-0.3.1}
 NCCLIENT_REPO=${NCCLIENT_REPO:-${GIT_BASE}/CiscoSystems/ncclient.git}
 NCCLIENT_BRANCH=${NCCLIENT_BRANCH:-master}
-#configure /etc/n1kv/n1kv.conf
+# Specify uVEM configuration information
 N1KV_CONF_DIR=/etc/n1kv
 N1KV_CONF=$N1KV_CONF_DIR/n1kv.conf
 UVEM_LOCAL_DIR=$TOP_DIR/files/images/cisco
 
+# 
 function _prefix_function() {
     declare -F $1 > /dev/null || die "$1 doesn't exist"
     eval "$(echo "${2}_${1}()"; declare -f ${1} | tail -n +2)"
@@ -321,15 +339,6 @@ function quantum_plugin_configure_l3_agent() {
     fi
 }
 
-function quantum_plugin_configure_plugin_agent() {
-    if _has_ovs_subplugin; then
-        ovs_quantum_plugin_configure_plugin_agent
-    else
-        OVS_BRIDGE=${OVS_BRIDGE:-br-int}
-        _quantum_ovs_base_setup_bridge $OVS_BRIDGE
-    fi
-}
-
 function _config_nexus_subplugin() {
     local cisco_cfg_file=$1
 
@@ -381,7 +390,42 @@ function _get_vsm_state() {
     vsm_state=$(sudo virsh list --all | awk '(NR > 2) {if (($2 == "DEVSTACK_VSM")) {$1="";$2="";print;}}')
 }
 
+function _wait_for_vsm_to_comeup() {
+    echo "Wait for the VSM to come up; This may take a while"
+    sh -c "while ! curl http://$Q_CISCO_PLUGIN_VSM_USERNAME:$Q_CISCO_PLUGIN_VSM_PASSWORD@$Q_CISCO_PLUGIN_VSM_IP; do sleep 10; done" &> /dev/null
+}
+
+function _is_vsm_console_on() {
+    local vnc_no=$(sudo virsh vncdisplay DEVSTACK_VSM 2> /dev/null)
+    local running=$(ps --no-headers -o cmd -C krdc | sed -n 's/krdc localhost\(:\d*\)/\1/p' | awk -v vno=$vnc_no '$1 == vno {print}')
+    if [[ -n $running ]]; then
+        return 0
+    else 
+        return 1
+    fi
+}
+
+function _open_vsm_console() {
+    vnc_no=$(sudo virsh vncdisplay DEVSTACK_VSM)
+    krdc localhost$vnc_no&
+    # remove the process from the current job so that it's not killed at the
+    # completion of stack.sh
+    disown %%
+}
+
+function _close_vsm_console() {
+    local vnc_no=$(sudo virsh vncdisplay DEVSTACK_VSM 2> /dev/null)
+    local console_pid=$(ps --no-headers -o pid,cmd -C krdc | sed -n 's/\(\d*\) krdc localhost\(:\d*\)/\1 \2/p' | awk -v vno=$vnc_no '$2 == vno {print $1}')
+    if [[ -n $console_pid ]]; then
+        kill $console_pid
+    fi
+}
+
 function _create_devstack_vsm() {
+    local vsm_image_file=$DATA_DIR/quantum/cisco/DEVSTACK_VSM.img
+    local vsm_xml_file=$DATA_DIR/quantum/cisco/DEVSTACK_VSM.xml
+    local recreate=no
+
     # Intall krdc package
     install_package krdc
 
@@ -392,17 +436,42 @@ function _create_devstack_vsm() {
         die $LINENO "Can't find the VSM iso image file $Q_CISCO_PLUGIN_VSM_ISO_IMAGE!"
     fi
 
-    local vsm_image_file=$DATA_DIR/quantum/cisco/DEVSTACK_VSM.img
+    if [[ ! -d $DATA_DIR/quantum/cisco ]]; then
+        mkdir -p $DATA_DIR/quantum/cisco
+    fi
 
-    vsm_uuid=$(uuidgen -t)
+    # Creat the VSM disk image file
+    if [[ ! -f $vsm_image_file ]]; then
+        sudo qemu-img create $vsm_image_file 8G
+    fi
+
+    _get_vsm_state
+
+    # Check if the vsm image is changed
+    if [[ -f $vsm_xml_file ]]; then
+        matched=$(grep -c -m 1 "<source file='$Q_CISCO_PLUGIN_VSM_ISO_IMAGE'/>" $vsm_xml_file)
+        # The image file is changed; the VM needs to be recreated
+        if [[ "$matched" == "0" ]]; then
+            recreate=yes
+        fi
+    fi
+
+    # In case of restart or recreate, kill the console and destroy the VM
+    if [[ ( "$vsm_state" == "  running" && "$Q_CISCO_PLUGIN_RESTART_VSM" == "yes" ) || "$recreate" == "yes" ]]; then 
+        _close_vsm_console
+        sudo virsh destroy DEVSTACK_VSM
+        if [[ "$recreate" == "yes" ]]; then
+            sudo virsh undefine DEVSTACK_VSM
+        fi
+    fi
 
     _get_vsm_state
 
     # VSM doesn't exist; create one
-    if [[ $vsm_state == '' ]]; then 
-	mkdir -p $DATA_DIR/quantum/cisco
+    if [[ -z $vsm_state ]]; then 
+        vsm_uuid=$(uuidgen -t)
 
-	cat > $DATA_DIR/quantum/cisco/DEVSTACK_VSM.xml <<-EOF
+	cat > $vsm_xml_file <<-EOF
 	    <domain type='qemu'>
 	        <name>DEVSTACK_VSM</name>
 	        <uuid>$vsm_uuid</uuid> 
@@ -499,15 +568,17 @@ function _create_devstack_vsm() {
 	        </devices>
 	    </domain>
 	EOF
-	sudo qemu-img create $DATA_DIR/quantum/cisco/DEVSTACK_VSM.img 8G
 
-	sudo virsh define $DATA_DIR/quantum/cisco/DEVSTACK_VSM.xml
+	sudo virsh define $vsm_xml_file
 	_get_vsm_state
     fi
 
     if [[ "$vsm_state" == "  shut off" ]]; then
+        # Create the VSM bridge
 	sudo brctl addbr ds-vsm-bridge 
 	sudo ip link set ds-vsm-bridge up
+
+        # Create a veth pair for communication between the host and the VSM
 	sudo ip link add tap-ds-vsm type veth peer name ds-vsm-veth
 	sudo ip link set tap-ds-vsm up
 	sudo ip link set tap-ds-vsm promisc on
@@ -515,26 +586,30 @@ function _create_devstack_vsm() {
 	sudo ip link set ds-vsm-veth promisc on
 	sudo brctl addif ds-vsm-bridge tap-ds-vsm
 	sudo ip -4 addr add $Q_CISCO_PLUGIN_TAP_VSM_IP dev ds-vsm-veth
-	sudo virsh start DEVSTACK_VSM
-	if [[ $? ]]; then 
-	    vnc_no=$(sudo virsh vncdisplay DEVSTACK_VSM)
-	    krdc localhost$vnc_no&
-            disown %%
+
+        # If the management interface is set, link the veth pair with it by
+        # setting up arp proxy. By doing so, establish communication between the
+        # VSM and all the other compute nodes.
+        if [[ -n $Q_CISCO_PLUGIN_MGMT_INTERFACE ]]; then
+            install_package parprouted
+            local running=$(ps --no-headers -o cmd -C parprouted | grep "parprouted $Q_CISCO_PLUGIN_MGMT_INTERFACE ds-vsm-veth")
+            if [[ -z $running ]]; then
+                sudo parprouted $Q_CISCO_PLUGIN_MGMT_INTERFACE ds-vsm-veth&
+                disown %%
+            fi
+        fi
+	if sudo virsh start DEVSTACK_VSM; then 
+            _open_vsm_console
 	fi
-        echo "Wait for the VSM to come up; This may take about 15 minutes"
-        sh -c "while ! curl http://$Q_CISCO_PLUGIN_VSM_USERNAME:$Q_CISCO_PLUGIN_VSM_PASSWORD@$Q_CISCO_PLUGIN_VSM_IP; do sleep 10; done" &> /dev/null
+        _wait_for_vsm_to_comeup
     else 
-	local vnc_no=$(sudo virsh vncdisplay DEVSTACK_VSM)
-        local running=$(ps --no-headers -o cmd -C krdc | sed -n 's/krdc localhost\(:\d*\)/\1/p' | awk -v vno=$vnc_no '$1 == vno {print}')
-        if [[ "$running" == "" ]]; then
-	    krdc localhost$vnc_no&
-            disown %%
+        if ! _is_vsm_console_on; then
+            _open_vsm_console
         fi
     fi
 }
 
 function write_n1kv_conf() {
-
     local n1kv_cfg_file=$1
     sudo cat > $n1kv_cfg_file <<-EOF
 	# This is a sample N1KV configurtion file.
@@ -647,9 +722,11 @@ function n1k_iniset() {
     fi
 }
 
-function get_vsm_info () {
-    vsm_ip_addr=$1 expect -c '
-	spawn /usr/bin/ssh admin@$env(vsm_ip_addr)
+function _get_vsm_info () {
+    # Node: no code with output should be added here. The caller depends on the
+    # output from the below expect output
+    vsm_ip_addr=$1 user=$2 passwd=$3 expect -c '
+	spawn /usr/bin/ssh $env(user)@$env(vsm_ip_addr)
         set timeout 30
 	expect {
 	    -re ".*Are.*.*yes.*no.*" {
@@ -659,7 +736,7 @@ function get_vsm_info () {
 	    }
 
 	    "*?assword:*" {
-	        send "Sfish123\n"
+	        send "$env(passwd)\n"
 	    }
         }
         expect {
@@ -674,6 +751,8 @@ function get_vsm_info () {
 			   0 [expr $expect_out(0,start) - 1]]
 	    }
 	}' | sed -n -e 's/  Hardware: Ethernet, address: \(..\)\(..\)\.\(..\)\(..\)\.\(..\)\(..\).*/\1:\2:\3:\4:\5:\6/p' -e 's/  Domain id: *\(\d*\)/\1/p'
+    # Node: no code with output should be added here. The caller depends on the
+    # output from the above expect output
 }
 
 function _configure_n1kv_subplugin() {
@@ -687,10 +766,16 @@ function _configure_n1kv_subplugin() {
     iniset $cisco_cfg_file N1KV:$Q_CISCO_PLUGIN_VSM_IP username $Q_CISCO_PLUGIN_VSM_USERNAME
     iniset $cisco_cfg_file N1KV:$Q_CISCO_PLUGIN_VSM_IP password $Q_CISCO_PLUGIN_VSM_PASSWORD
 
-    iniset $cisco_cfg_file CISCO_N1K integration_bridge br-int
-    iniset $cisco_cfg_file CISCO_N1K enable_tunneling True
-    iniset $cisco_cfg_file CISCO_N1K vxlan_id_ranges 5000:10000
-    iniset $cisco_cfg_file CISCO_N1K network_vlan_ranges vlan:1:4095
+    iniset $cisco_cfg_file CISCO_N1K integration_bridge $Q_CISCO_PLUGIN_INTEGRATION_BRIDGE
+    iniset $cisco_cfg_file CISCO_N1K enable_tunneling $Q_CISCO_PLUGIN_ENABLE_TUNNELING
+    iniset $cisco_cfg_file CISCO_N1K vxlan_id_ranges $Q_CISCO_PLUGIN_VXLAN_ID_RANGES
+    iniset $cisco_cfg_file CISCO_N1K network_vlan_ranges $Q_CISCO_PLUGIN_VLAN_RANGES
+
+    sudo cp -r $QUANTUMCLIENT_DIR/quantumclient /usr/local/lib/python2.7/dist-packages/
+}
+
+function _configure_uvem() {
+    install_package expect
 
     # Put config files in ``N1KV_CONF_DIR``
     if [[ ! -d $N1KV_CONF_DIR ]]; then
@@ -700,10 +785,12 @@ function _configure_n1kv_subplugin() {
 
     local n1kv_temp_file=`mktemp`    
 
-    # 
     write_n1kv_conf $n1kv_temp_file
 
-    local vsm_info=($(get_vsm_info $Q_CISCO_PLUGIN_VSM_IP))
+    _wait_for_vsm_to_comeup
+    # To make sure that ssh key is always up to date, remove the entry
+    ssh-keygen -f ~/.ssh/known_hosts -R $Q_CISCO_PLUGIN_VSM_IP
+    local vsm_info=($(_get_vsm_info $Q_CISCO_PLUGIN_VSM_IP $Q_CISCO_PLUGIN_VSM_USERNAME $Q_CISCO_PLUGIN_VSM_PASSWORD))
 
     if [[ "${vsm_info[1]}" != "" ]]; then
         n1k_iniset $n1kv_temp_file switch-domain ${vsm_info[1]}
@@ -717,11 +804,12 @@ function _configure_n1kv_subplugin() {
     if [[ "$Q_CISCO_PLUGIN_VSM_MGMT_INTF" != "" ]]; then
         n1k_iniset $n1kv_temp_file host-mgmt-intf $Q_CISCO_PLUGIN_VSM_MGMT_INTF
     fi
-    if [[ "$Q_CISCO_PLUGIN_UVEM_OVS_BRNAME" != "" ]]; then
-        n1k_iniset $n1kv_temp_file uvem-ovs-brname $Q_CISCO_PLUGIN_UVEM_OVS_BRNAME
+    if [[ "$Q_CISCO_PLUGIN_INTEGRATION_BRIDGE" != "" ]]; then
+        n1k_iniset $n1kv_temp_file uvem-ovs-brname $Q_CISCO_PLUGIN_INTEGRATION_BRIDGE
     fi
 
     sudo cp $n1kv_temp_file $N1KV_CONF
+    sudo chmod a+r $N1KV_CONF
     rm $n1kv_temp_file
 
     #hard code path for now
@@ -754,6 +842,18 @@ function _configure_n1kv_subplugin() {
     else 
         #restart in case of change in the VSM configuration
         sudo /etc/init.d/n1kv restart
+    fi
+}
+
+function quantum_plugin_configure_plugin_agent() {
+    if _has_ovs_subplugin; then
+        ovs_quantum_plugin_configure_plugin_agent
+    else 
+        if _has_n1kv_subplugin; then
+            OVS_BRIDGE=$Q_CISCO_PLUGIN_INTEGRATION_BRIDGE
+            _quantum_ovs_base_setup_bridge $OVS_BRIDGE
+            _configure_uvem 
+        fi
     fi
 }
 
