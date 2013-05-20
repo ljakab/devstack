@@ -826,7 +826,11 @@ function _configure_uvem() {
     fi
 
     local n1kv_temp_file=`mktemp`    
-    write_n1kv_conf $n1kv_temp_file
+    if [[ ! -f $N1KV_CONF ]]; then
+        write_n1kv_conf $n1kv_temp_file
+    else
+        cp $N1KV_CONF $n1kv_temp_file
+    fi
 
     # Wait for VSM to come up before requesting information from it
     _wait_for_vsm_to_comeup
