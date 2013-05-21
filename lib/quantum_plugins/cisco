@@ -8,11 +8,11 @@ set +o xtrace
 # Indicate if a VSM instance should be created
 Q_CISCO_PLUGIN_DEVSTACK_VSM=${Q_CISCO_PLUGIN_DEVSTACK_VSM:-True}
 # Set the interface ip that is used to tap into the VSM
-Q_CISCO_PLUGIN_TAP_VSM_IP=${Q_CISCO_PLUGIN_TAP_VSM_IP:-172.16.1.225/28}
+Q_CISCO_PLUGIN_TAP_VSM_IP=${Q_CISCO_PLUGIN_TAP_VSM_IP:-}
 # Specify the VSM image file
 Q_CISCO_PLUGIN_VSM_ISO_IMAGE=${Q_CISCO_PLUGIN_VSM_ISO_IMAGE:-}
 # Scecify the VSM parameters
-Q_CISCO_PLUGIN_VSM_IP=${Q_CISCO_PLUGIN_VSM_IP:-172.16.1.25}
+Q_CISCO_PLUGIN_VSM_IP=${Q_CISCO_PLUGIN_VSM_IP:-}
 # Specify the VSM username
 Q_CISCO_PLUGIN_VSM_USERNAME=${Q_CISCO_PLUGIN_VSM_USERNAME:-admin}
 # Specify the VSM passward for above username
@@ -23,7 +23,7 @@ Q_CISCO_PLUGIN_UVEM_DEB_IMAGE=${Q_CISCO_PLUGIN_UVEM_DEB_IMAGE:-}
 Q_CISCO_PLUGIN_INTEGRATION_BRIDGE=${Q_CISCO_PLUGIN_INTEGRATION_BRIDGE:-br-int}
 # Specify the host management interface required by uVEM
 Q_CISCO_PLUGIN_HOST_MGMT_INTF=${Q_CISCO_PLUGIN_HOST_MGMT_INTF:-eth1}
-# Specify is tunneling is enabled
+# Specify if tunneling is enabled
 Q_CISCO_PLUGIN_ENABLE_TUNNELING=${Q_CISCO_PLUGIN_ENABLE_TUNNELING:-True}
 # Specify the VXLAN range
 Q_CISCO_PLUGIN_VXLAN_ID_RANGES=${Q_CISCO_PLUGIN_VXLAN_ID_RANGES:-5000:10000}
