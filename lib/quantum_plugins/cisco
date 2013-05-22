@@ -166,64 +166,64 @@ function reset_nexus_switch() {
 
         #define the XML snippets
 	EXEC_CONF_SNIPPET = """
-	      <config xmlns:xc="urn:ietf:params:xml:ns:netconf:base:1.0">
-		<configure>
-		  <__XML__MODE__exec_configure>%s
-		  </__XML__MODE__exec_configure>
-		</configure>
-	      </config>
+	    <config xmlns:xc="urn:ietf:params:xml:ns:netconf:base:1.0">
+	        <configure>
+	            <__XML__MODE__exec_configure>%s
+	            </__XML__MODE__exec_configure>
+	        </configure>
+	    </config>
 	"""
 
 	CMD_NO_SWITCHPORT = EXEC_CONF_SNIPPET % """
-		  <interface>
-		    <ethernet>
-		      <interface>%s</interface>
-		      <__XML__MODE_if-ethernet-switch>
-			<no>
-			  <switchport>
-			  </switchport>
-			</no>
-		      </__XML__MODE_if-ethernet-switch>
-		    </ethernet>
-		  </interface>
+	    <interface>
+	        <ethernet>
+	            <interface>%s</interface>
+	            <__XML__MODE_if-ethernet-switch>
+	                <no>
+	                    <switchport>
+	                    </switchport>
+	                </no>
+	            </__XML__MODE_if-ethernet-switch>
+	        </ethernet>
+	    </interface>
 	"""
 
 	CMD_SWITCHPORT = EXEC_CONF_SNIPPET % """
-		  <interface>
-		    <ethernet>
-		      <interface>%s</interface>
-		      <__XML__MODE_if-ethernet-switch>
-			  <switchport>
-			  </switchport>
-			  <switchport>
-			      <mode>
-				  <trunk>
-				  </trunk>
-			      </mode>
-			  </switchport>
-			  <switchport>
-			      <trunk>
-				  <allowed>
-				      <vlan>
-					  <none>
-					  </none>
-				      </vlan>
-				  </allowed>
-			      </trunk>
-			  </switchport>
-		      </__XML__MODE_if-ethernet-switch>
-		    </ethernet>
-		  </interface>
+	    <interface>
+	        <ethernet>
+	            <interface>%s</interface>
+	            <__XML__MODE_if-ethernet-switch>
+	                <switchport>
+	                </switchport>
+	                <switchport>
+	                    <mode>
+	                        <trunk>
+	                        </trunk>
+	                    </mode>
+	                </switchport>
+	                <switchport>
+	                    <trunk>
+	                        <allowed>
+	                            <vlan>
+	                                <none>
+	                                </none>
+	                            </vlan>
+	                        </allowed>
+	                    </trunk>
+	                </switchport>
+	            </__XML__MODE_if-ethernet-switch>
+	        </ethernet>
+	    </interface>
 	"""
 
 	CMD_NO_VLAN_RANGE = EXEC_CONF_SNIPPET % """
-		  <no>
-		  <vlan>
-		    <vlan-id-create-delete>
-		      <__XML__PARAM_value>%s-%s</__XML__PARAM_value>
-		    </vlan-id-create-delete>
-		  </vlan>
-		  </no>
+	    <no>
+	        <vlan>
+	            <vlan-id-create-delete>
+	                <__XML__PARAM_value>%s-%s</__XML__PARAM_value>
+	            </vlan-id-create-delete>
+	        </vlan>
+	    </no>
 	"""
 
 	from ncclient import manager as ncm
@@ -248,9 +248,9 @@ function reset_nexus_switch() {
 	# Connect to the Nexus switch
 	try:
 	    nexus_manager = ncm.connect(host=nexus_host, port=nexus_ssh_port,
-					username=nexus_username,
-					password=nexus_passwd,
-					timeout=10)
+	                                username=nexus_username,
+	                                password=nexus_passwd,
+	                                timeout=10)
 	except NCClientError as e:
 	    print "Failed to connect: %s" % e
 	    sys.exit(1)
@@ -259,32 +259,32 @@ function reset_nexus_switch() {
 	for port_no in xrange(port_count):
 	    port_id = nexus_ports[port_no * 2 + 1].strip()
 	    try:
-		nexus_manager.edit_config(target="running",
-					  config=CMD_NO_SWITCHPORT % port_id)
-		nexus_manager.edit_config(target="running",
-					  config=CMD_SWITCHPORT % port_id)
+	        nexus_manager.edit_config(target="running",
+	                                  config=CMD_NO_SWITCHPORT % port_id)
+	        nexus_manager.edit_config(target="running",
+	                                  config=CMD_SWITCHPORT % port_id)
 	    except NCClientError as e:
-		print "Failed to configure switchport %s: %s" % (port_id, e)
-		sys.exit(1)
+	        print "Failed to configure switchport %s: %s" % (port_id, e)
+	        sys.exit(1)
 
         # Unconfigure/reset the vlan ranges to be used by the deployment
 	for vlan_range in vlan_ranges:
 	    vlan_range = vlan_range.strip()
 	    if ':' in vlan_range:
-		try:
-		    physical_network, vlan_min, vlan_max = vlan_range.split(':')
-		except ValueError as e:
-		    print "Invalid network VLAN range: %s" % vlan_range
-		    sys.exit(1)
+	        try:
+	            physical_network, vlan_min, vlan_max = vlan_range.split(':')
+	        except ValueError as e:
+	            print "Invalid network VLAN range: %s" % vlan_range
+	            sys.exit(1)
 
-		try:
-		    nexus_manager.edit_config(target="running",
-				     config=CMD_NO_VLAN_RANGE % (vlan_min, vlan_max))
-		except NCClientError as e:
-		    if str(e).find("ERROR: Delete failed, VLAN does not exist") == -1:
-			print "Failed to reset vlan range "\
-			      "%s-%s: %s" % (vlan_min, vlan_max, e)
-			sys.exit(1)
+	        try:
+	            nexus_manager.edit_config(target="running",
+	            config=CMD_NO_VLAN_RANGE % (vlan_min, vlan_max))
+	        except NCClientError as e:
+	            if str(e).find("ERROR: Delete failed, VLAN does not exist") == -1:
+	                print "Failed to reset vlan range "\
+	                      "%s-%s: %s" % (vlan_min, vlan_max, e)
+	                sys.exit(1)
 	EOF
 }
 
@@ -349,30 +349,30 @@ function quantum_plugin_configure_l3_agent() {
     fi
 }
 
-function _config_nexus_subplugin() {
+function _configure_nexus_subplugin() {
     local cisco_cfg_file=$1
 
     # Install Cisco ncclient if necessary
     if ! is_ncclient_installed; then
-	# Preserve the two global variables
-	local offline=$OFFLINE
-	local reclone=$RECLONE
-	# Change their values to allow installation
-	OFFLINE=False
-	RECLONE=yes
-	install_ncclient
-	# Restore their values
-	OFFLINE=$offline
-	RECLONE=$reclone
+        # Preserve the two global variables
+        local offline=$OFFLINE
+        local reclone=$RECLONE
+        # Change their values to allow installation
+        OFFLINE=False
+        RECLONE=yes
+        install_ncclient
+        # Restore their values
+        OFFLINE=$offline
+        RECLONE=$reclone
     fi
 
     # Setup default nexus switch information
     if [ ! -v Q_CISCO_PLUGIN_SWITCH_INFO ]; then
-	declare -A Q_CISCO_PLUGIN_SWITCH_INFO
-	HOST_NAME=$(hostname)
-	Q_CISCO_PLUGIN_SWITCH_INFO=([1.1.1.1]=stack:stack:22:${HOST_NAME}:1/10)
+        declare -A Q_CISCO_PLUGIN_SWITCH_INFO
+        HOST_NAME=$(hostname)
+        Q_CISCO_PLUGIN_SWITCH_INFO=([1.1.1.1]=stack:stack:22:${HOST_NAME}:1/10)
     else
-	iniset $cisco_cfg_file CISCO nexus_driver quantum.plugins.cisco.nexus.cisco_nexus_network_driver_v2.CiscoNEXUSDriver
+        iniset $cisco_cfg_file CISCO nexus_driver quantum.plugins.cisco.nexus.cisco_nexus_network_driver_v2.CiscoNEXUSDriver
     fi
 
     # Setup the switch configurations
@@ -382,17 +382,17 @@ function _config_nexus_subplugin() {
     local sw_info_array
     declare -i count=0
     for nswitch in ${!Q_CISCO_PLUGIN_SWITCH_INFO[@]}; do
-	sw_info=${Q_CISCO_PLUGIN_SWITCH_INFO[$nswitch]}
-	sw_info_array=${sw_info//:/ }
-	sw_info_array=( $sw_info_array )
-	count=${#sw_info_array[@]}
-	if [[ $count < 5 || $(( ($count-3) % 2 )) != 0 ]]; then
-	    die $LINENO "Incorrect switch configuration: ${Q_CISCO_PLUGIN_SWITCH_INFO[$nswitch]}"
-	fi
-	_config_switch $cisco_cfg_file $nswitch ${sw_info_array[@]}
-	# Assuming OVS is one of the subplugins for now
-	vlan_ranges=${OVS_VLAN_RANGES:-none}
-	reset_nexus_switch $nswitch $sw_info $vlan_ranges
+        sw_info=${Q_CISCO_PLUGIN_SWITCH_INFO[$nswitch]}
+        sw_info_array=${sw_info//:/ }
+        sw_info_array=( $sw_info_array )
+        count=${#sw_info_array[@]}
+        if [[ $count < 5 || $(( ($count-3) % 2 )) != 0 ]]; then
+            die $LINENO "Incorrect switch configuration: ${Q_CISCO_PLUGIN_SWITCH_INFO[$nswitch]}"
+        fi
+        _config_switch $cisco_cfg_file $nswitch ${sw_info_array[@]}
+        # Assuming OVS is one of the subplugins for now
+        vlan_ranges=${OVS_VLAN_RANGES:-none}
+        reset_nexus_switch $nswitch $sw_info $vlan_ranges
     done
 }
 
@@ -599,23 +599,23 @@ function _create_devstack_vsm() {
 	    </domain>
 	EOF
 
-	sudo virsh define $vsm_xml_file
-	vsm_state=$(_get_vsm_state)
+        sudo virsh define $vsm_xml_file
+        vsm_state=$(_get_vsm_state)
     fi
 
     if [[ "$vsm_state" == "  shut off" ]]; then
         # Create the VSM bridge
-	sudo brctl addbr ds-vsm-bridge
-	sudo ip link set ds-vsm-bridge up
+        sudo brctl addbr ds-vsm-bridge
+        sudo ip link set ds-vsm-bridge up
 
         # Create a veth pair for communication between the host and the VSM
-	sudo ip link add tap-ds-vsm type veth peer name ds-vsm-veth
-	sudo ip link set tap-ds-vsm up
-	sudo ip link set tap-ds-vsm promisc on
-	sudo ip link set ds-vsm-veth up
-	sudo ip link set ds-vsm-veth promisc on
-	sudo brctl addif ds-vsm-bridge tap-ds-vsm
-	sudo ip -4 addr add $Q_CISCO_PLUGIN_TAP_VSM_IP dev ds-vsm-veth
+        sudo ip link add tap-ds-vsm type veth peer name ds-vsm-veth
+        sudo ip link set tap-ds-vsm up
+        sudo ip link set tap-ds-vsm promisc on
+        sudo ip link set ds-vsm-veth up
+        sudo ip link set ds-vsm-veth promisc on
+        sudo brctl addif ds-vsm-bridge tap-ds-vsm
+        sudo ip -4 addr add $Q_CISCO_PLUGIN_TAP_VSM_IP dev ds-vsm-veth
 
         # In multi-host environment, link the veth pair with the host management
         # interface by setting up arp proxy. By doing so, establish
@@ -628,9 +628,9 @@ function _create_devstack_vsm() {
                 disown %%
             fi
         fi
-	if sudo virsh start DEVSTACK_VSM; then
+        if sudo virsh start DEVSTACK_VSM; then
             _open_vsm_console
-	fi
+        fi
         _wait_for_vsm_to_comeup
     else
         if ! _is_vsm_console_on; then
@@ -757,31 +757,31 @@ function _get_vsm_info () {
     # Node: no code with output should be added here. The caller depends on the
     # output from the below expect output
     vsm_ip_addr=$1 user=$2 passwd=$3 expect -c '
-	spawn /usr/bin/ssh $env(user)@$env(vsm_ip_addr)
+        spawn /usr/bin/ssh $env(user)@$env(vsm_ip_addr)
         set timeout 240
-	expect {
-	    -re ".*Are.*.*yes.*no.*" {
-	        send "yes\n"
-	        exp_continue
-	        #look for the password prompt
-	    }
+        expect {
+            -re ".*Are.*.*yes.*no.*" {
+                send "yes\n"
+                exp_continue
+                #look for the password prompt
+            }
 
-	    "*?assword:*" {
-	        send "$env(passwd)\n"
-	    }
+            "*?assword:*" {
+                send "$env(passwd)\n"
+            }
         }
         expect {
-	    -re ".*# " {
-	        send "show interface control 0\n"
-	        expect -indices -re ".*# "
-	        puts [string range $expect_out(buffer) \
-			   0 [expr $expect_out(0,start) - 1]]
-	        send "show svs domain\n"
-	        expect -indices -re ".*# "
-	        puts [string range $expect_out(buffer) \
-			   0 [expr $expect_out(0,start) - 1]]
-	    }
-	}' | sed -n -e 's/  Hardware: Ethernet, address: \(..\)\(..\)\.\(..\)\(..\)\.\(..\)\(..\).*/\1:\2:\3:\4:\5:\6/p' -e 's/  Domain id: *\(\d*\)/\1/p'
+            -re ".*# " {
+                send "show interface control 0\n"
+                expect -indices -re ".*# "
+                puts [string range $expect_out(buffer) \
+                           0 [expr $expect_out(0,start) - 1]]
+                send "show svs domain\n"
+                expect -indices -re ".*# "
+                puts [string range $expect_out(buffer) \
+                           0 [expr $expect_out(0,start) - 1]]
+            }
+        }' | sed -n -e 's/  Hardware: Ethernet, address: \(..\)\(..\)\.\(..\)\(..\)\.\(..\)\(..\).*/\1:\2:\3:\4:\5:\6/p' -e 's/  Domain id: *\(\d*\)/\1/p'
     # Node: no code with output should be added here. The caller depends on the
     # output from the above expect output
 }
