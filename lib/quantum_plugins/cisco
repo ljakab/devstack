@@ -413,7 +413,7 @@ function _is_vsm_console_on() {
     local running=$(ps --no-headers -o cmd -C krdc | sed -n 's/krdc localhost\(:\d*\)/\1/p' | awk -v vno=$vnc_no '$1 == vno {print}')
     if [[ -n $running ]]; then
         return 0
-    else 
+    else
         return 1
     fi
 }
@@ -474,7 +474,7 @@ function _create_devstack_vsm() {
     fi
 
     # In case of restart or recreate, kill the console and destroy the VM
-    if [[ ( "$vsm_state" == "  running" && "$Q_CISCO_PLUGIN_RESTART_VSM" == "yes" ) || "$recreate" == "yes" ]]; then 
+    if [[ ( "$vsm_state" == "  running" && "$Q_CISCO_PLUGIN_RESTART_VSM" == "yes" ) || "$recreate" == "yes" ]]; then
         _close_vsm_console
         sudo virsh destroy DEVSTACK_VSM
         if [[ "$recreate" == "yes" ]]; then
@@ -485,10 +485,10 @@ function _create_devstack_vsm() {
     vsm_state=$(_get_vsm_state)
 
     # VSM doesn't exist; create one
-    if [[ -z $vsm_state ]]; then 
+    if [[ -z $vsm_state ]]; then
         local vsm_uuid=$(uuidgen -t)
         local libvirt_type=$LIBVIRT_TYPE
-        
+
         # Determine the libvirt type
         if [[ "$libvirt_type" == "kvm" ]]; then
             sudo modprobe kvm || true
@@ -500,32 +500,32 @@ function _create_devstack_vsm() {
 
         # Note, mac addresses for NICs are hard-coded. VSM seems to take MAC
         # addresses in certain ranges. Therefore, random-generated MAC addresses
-        # may not work.  
+        # may not work.
 	cat > $vsm_xml_file <<-EOF
 	    <domain type='$libvirt_type'>
 	        <name>DEVSTACK_VSM</name>
-	        <uuid>$vsm_uuid</uuid> 
-	        <memory unit='KiB'>2048000</memory> 
-	        <currentMemory unit='KiB'>1024000</currentMemory> 
+	        <uuid>$vsm_uuid</uuid>
+	        <memory unit='KiB'>2048000</memory>
+	        <currentMemory unit='KiB'>1024000</currentMemory>
 	        <vcpu placement='static'>1</vcpu>
 	        <os>
-	            <type arch='x86_64' machine='pc-1.0'>hvm</type> 
+	            <type arch='x86_64' machine='pc-1.0'>hvm</type>
 	            <boot dev='cdrom'/>
 	            <boot dev='hd'/>
 	        </os>
 
 	        <features> <acpi/> <apic/> <pae/> </features>
 
-	        <clock offset='localtime'/> 
+	        <clock offset='localtime'/>
 	        <on_poweroff>destroy</on_poweroff>
-	        <on_reboot>destroy</on_reboot> 
-	        <on_crash>destroy</on_crash> 
+	        <on_reboot>destroy</on_reboot>
+	        <on_crash>destroy</on_crash>
 
 	        <devices>
-	            <emulator>/usr/bin/qemu-system-x86_64</emulator> 
+	            <emulator>/usr/bin/qemu-system-x86_64</emulator>
 	            <disk type='file' device='disk'>
 	                <driver name='qemu' type='raw'/>
-	                <source file='$vsm_image_file'/> 
+	                <source file='$vsm_image_file'/>
 	                <target dev='hda' bus='ide'/>
 	                <alias name='ide0-0-0'/>
 	                <address type='drive' controller='0' bus='0' target='0' unit='0'/>
@@ -541,16 +541,16 @@ function _create_devstack_vsm() {
 
 	            <controller type='usb' index='0'>
 	                <alias name='usb0'/>
-	                <address type='pci' domain='0x0000' bus='0x00' slot='0x01' function='0x2'/> 
+	                <address type='pci' domain='0x0000' bus='0x00' slot='0x01' function='0x2'/>
 	            </controller>
 
 	            <controller type='ide' index='0'>
 	                <alias name='ide0'/>
-	                <address type='pci' domain='0x0000' bus='0x00' slot='0x01' function='0x1'/> 
+	                <address type='pci' domain='0x0000' bus='0x00' slot='0x01' function='0x1'/>
 	            </controller>
 
 	            <interface type='bridge'>
-	                <mac address='0e:1f:35:ab:45:2e'/> 
+	                <mac address='0e:1f:35:ab:45:2e'/>
 	                <source bridge='ds-vsm-bridge'/>
 	                <target dev='ds-vsm-vnet0'/>
 	                <model type='e1000'/>
@@ -563,7 +563,7 @@ function _create_devstack_vsm() {
 	                <target dev='ds-vsm-vnet1'/>
 	                <model type='e1000'/>
 	                <address type='pci' domain='0x0000' bus='0x00' slot='0x06' function='0x0'/>
-	            </interface> 
+	            </interface>
 
 	            <interface type='bridge'>
 	                <mac address='0e:1f:35:ab:45:4e'/>
@@ -571,7 +571,7 @@ function _create_devstack_vsm() {
 	                <target dev='ds-vsm-vnet2'/>
 	                <model type='e1000'/>
 	                <address type='pci' domain='0x0000' bus='0x00' slot='0x07' function='0x0'/>
-	            </interface> 
+	            </interface>
 
 	            <serial type='pty'>
 	                <target port='0'/>
@@ -581,7 +581,7 @@ function _create_devstack_vsm() {
 	            </console>
 	            <input type='mouse' bus='ps2'/>
 	            <graphics type='vnc' port='5900' autoport='yes' listen='0.0.0.0' keymap='en-us'>
-	                <listen type='address' address='0.0.0.0'/> 
+	                <listen type='address' address='0.0.0.0'/>
 	            </graphics>
 
 	            <video>
@@ -592,7 +592,7 @@ function _create_devstack_vsm() {
 
 	            <memballoon model='virtio'>
 	                <alias name='balloon0'/>
-	                <address type='pci' domain='0x0000' bus='0x00' slot='0x04' function='0x0'/> 
+	                <address type='pci' domain='0x0000' bus='0x00' slot='0x04' function='0x0'/>
 	            </memballoon>
 
 	        </devices>
@@ -605,7 +605,7 @@ function _create_devstack_vsm() {
 
     if [[ "$vsm_state" == "  shut off" ]]; then
         # Create the VSM bridge
-	sudo brctl addbr ds-vsm-bridge 
+	sudo brctl addbr ds-vsm-bridge
 	sudo ip link set ds-vsm-bridge up
 
         # Create a veth pair for communication between the host and the VSM
@@ -628,11 +628,11 @@ function _create_devstack_vsm() {
                 disown %%
             fi
         fi
-	if sudo virsh start DEVSTACK_VSM; then 
+	if sudo virsh start DEVSTACK_VSM; then
             _open_vsm_console
 	fi
         _wait_for_vsm_to_comeup
-    else 
+    else
         if ! _is_vsm_console_on; then
             _open_vsm_console
         fi
@@ -644,11 +644,11 @@ function write_n1kv_conf() {
     sudo cat > $n1kv_cfg_file <<-EOF
 	# This is a sample N1KV configurtion file.
 	# <n1kv.conf> file contains all the configuration parameters for UVEM operation.
-	# Please find below a brief explanation of these parameters and their meaning. 
+	# Please find below a brief explanation of these parameters and their meaning.
 	# Optional Parameters and Default Values of parameters are explicitly stated.
-	# Note: 
-	# a) Mandatory parameters are needed for proper UVEM operation. 
-	#   N1KV DP/DPA should start even if these are not specified. 
+	# Note:
+	# a) Mandatory parameters are needed for proper UVEM operation.
+	#   N1KV DP/DPA should start even if these are not specified.
 	#   But there will be functional impact. For eg: in VSM connectivity
 	# b)For most of the mandatory parameters, you can use 'vemcmd' configuration mode.
 	#   But to be persistent, please edit this configuration file.
@@ -676,18 +676,18 @@ function write_n1kv_conf() {
 
 	# TAG: host-mgmt-intf
 	# Description: Management interface of the Host
-	# Optional: No (Even if not on N1KV, we need this 
+	# Optional: No (Even if not on N1KV, we need this
 	#               for Host Identification on VSM).
 	# Default: n/a
 	host-mgmt-intf eth1
 
 	#
 	#<system-port-profile-Info>
-	# Description:  System Port Profiles. 
+	# Description:  System Port Profiles.
 	# Optional: Yes (If there are no System Interfaces: Mgmt I/F etc)
 	#
 	#Trunk Profile Format
-	#profile <name> trunk <vlan> 
+	#profile <name> trunk <vlan>
 	#profile <name> native-vlan <vlan>
 	#profile <name> mtu <mtu-size>
 	#
@@ -700,7 +700,7 @@ function write_n1kv_conf() {
 	# Optional: Uplinks: NO. System-Veth: NO.
 	#         : Non-System Veth: YES. (Assume it will be populated by 'libvirt')
 	#
-	# Format: 
+	# Format:
 	# phys <port-name> profile  <profile-name>
 	# virt <port-name> profile  <profile-name>
 	# TBD: For uplinks UUID also need to be specified.
@@ -714,15 +714,15 @@ function write_n1kv_conf() {
 
 	# <dvswitch-uuid>
 	# Description: N1KV DVS UUID. Not to be confused with Open VSwitch UUID
-	# Optional : YES. 
+	# Optional : YES.
 	# dvswitch-uuid <sw-uuid>
 
 	# TBD
 	# <log-path>
-	# Description: Log Directory Path for DP/DPA 
+	# Description: Log Directory Path for DP/DPA
 	# Optional: YES.
 	# Default:
-	# Format: 
+	# Format:
 	# log-path:/opt/cisco/n1kv/logs
 
 	# <uvem-ovs-brname>
@@ -730,7 +730,7 @@ function write_n1kv_conf() {
 	# Description: Default Open VSwitch Bridge Name
 	# Optional: YES.
 	# Default: n1kvdvs
-	# Format: 
+	# Format:
 	# uvem-ovs-brname n1kvdvs
 	uvem-ovs-brname br-int
 
@@ -773,11 +773,11 @@ function _get_vsm_info () {
         expect {
 	    -re ".*# " {
 	        send "show interface control 0\n"
-	        expect -indices -re ".*# " 
+	        expect -indices -re ".*# "
 	        puts [string range $expect_out(buffer) \
 			   0 [expr $expect_out(0,start) - 1]]
 	        send "show svs domain\n"
-	        expect -indices -re ".*# " 
+	        expect -indices -re ".*# "
 	        puts [string range $expect_out(buffer) \
 			   0 [expr $expect_out(0,start) - 1]]
 	    }
@@ -810,7 +810,7 @@ function _configure_n1kv_subplugin() {
     sudo cp -r $QUANTUMCLIENT_DIR/quantumclient /usr/local/lib/python2.7/dist-packages/
 }
 
-# Configure/Install the uVEM 
+# Configure/Install the uVEM
 function _configure_uvem() {
     # Specify uVEM configuration information
     local N1KV_CONF_DIR=/etc/n1kv
@@ -825,7 +825,7 @@ function _configure_uvem() {
         sudo chown $STACK_USER $N1KV_CONF_DIR
     fi
 
-    local n1kv_temp_file=`mktemp`    
+    local n1kv_temp_file=`mktemp`
     if [[ ! -f $N1KV_CONF ]]; then
         write_n1kv_conf $n1kv_temp_file
     else
@@ -886,7 +886,7 @@ function _configure_uvem() {
         #install the uVEM
         install_package libnl1
         sudo dpkg -i $UVEM_LOCAL_DIR/$uvem_image
-    else 
+    else
         #restart in case of change in the VSM configuration
         sudo /etc/init.d/n1kv restart
     fi
@@ -895,13 +895,13 @@ function _configure_uvem() {
 function quantum_plugin_configure_plugin_agent() {
     if _has_ovs_subplugin; then
         ovs_quantum_plugin_configure_plugin_agent
-    else 
+    else
         if _has_n1kv_subplugin; then
             OVS_BRIDGE=$Q_CISCO_PLUGIN_INTEGRATION_BRIDGE
             _quantum_ovs_base_setup_bridge $OVS_BRIDGE
             # Assuming q-agt will be enabled on all the compute nodes
             # uVEM is only configured/installed with q-agt enabled
-            _configure_uvem 
+            _configure_uvem
         fi
     fi
 }
