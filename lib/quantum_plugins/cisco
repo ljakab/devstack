@@ -7,28 +7,37 @@ set +o xtrace
 
 # Indicate if a VSM instance should be created
 Q_CISCO_PLUGIN_DEVSTACK_VSM=${Q_CISCO_PLUGIN_DEVSTACK_VSM:-True}
-# Set the interface ip that is used to tap into the VSM
-Q_CISCO_PLUGIN_TAP_VSM_IP=${Q_CISCO_PLUGIN_TAP_VSM_IP:-}
+
 # Specify the VSM image file
 Q_CISCO_PLUGIN_VSM_ISO_IMAGE=${Q_CISCO_PLUGIN_VSM_ISO_IMAGE:-}
+
 # Scecify the VSM parameters
-Q_CISCO_PLUGIN_VSM_IP=${Q_CISCO_PLUGIN_VSM_IP:-}
+Q_CISCO_PLUGIN_VSM_IP=${Q_CISCO_PLUGIN_VSM_IP:-192.168.168.2}
+
 # Specify the VSM username
 Q_CISCO_PLUGIN_VSM_USERNAME=${Q_CISCO_PLUGIN_VSM_USERNAME:-admin}
+
 # Specify the VSM passward for above username
 Q_CISCO_PLUGIN_VSM_PASSWORD=${Q_CISCO_PLUGIN_VSM_PASSWORD:-Sfish123}
+
 # Specify the uVEM image/module
 Q_CISCO_PLUGIN_UVEM_DEB_IMAGE=${Q_CISCO_PLUGIN_UVEM_DEB_IMAGE:-}
+
 # Specify the uVEM integration bridge name
 Q_CISCO_PLUGIN_INTEGRATION_BRIDGE=${Q_CISCO_PLUGIN_INTEGRATION_BRIDGE:-br-int}
+
 # Specify the host management interface required by uVEM
-Q_CISCO_PLUGIN_HOST_MGMT_INTF=${Q_CISCO_PLUGIN_HOST_MGMT_INTF:-eth1}
+Q_CISCO_PLUGIN_HOST_MGMT_INTF=${Q_CISCO_PLUGIN_HOST_MGMT_INTF:-eth0}
+
 # Specify if tunneling is enabled
 Q_CISCO_PLUGIN_ENABLE_TUNNELING=${Q_CISCO_PLUGIN_ENABLE_TUNNELING:-True}
+
 # Specify the VXLAN range
 Q_CISCO_PLUGIN_VXLAN_ID_RANGES=${Q_CISCO_PLUGIN_VXLAN_ID_RANGES:-5000:10000}
+
 # Specify the VLAN range
 Q_CISCO_PLUGIN_VLAN_RANGES=${Q_CISCO_PLUGIN_VLAN_RANGES:-vlan:1:4095}
+
 # Specify if VSM should be restarted
 Q_CISCO_PLUGIN_RESTART_VSM=${Q_CISCO_PLUGIN_RESTART_VSM:-no}
 
@@ -404,7 +413,7 @@ function _get_vsm_state() {
 # This routine keeps contacting the VSM in 10s interval until it responds
 function _wait_for_vsm_to_comeup() {
     echo "Wait for the VSM to come up; This may take a while"
-    sh -c "while ! curl http://$Q_CISCO_PLUGIN_VSM_USERNAME:$Q_CISCO_PLUGIN_VSM_PASSWORD@$Q_CISCO_PLUGIN_VSM_IP; do sleep 10; done" &> /dev/null
+    sh -c "while ! http_proxy= curl -s -m 5 http://$2:$3@$1; do sleep 10; done" &> /dev/null
 }
 
 # Check if the VSM console is on
@@ -436,12 +445,170 @@ function _close_vsm_console() {
     fi
 }
 
+function _repackage_iso_with_ovfenv() {
+    local vsm_tap_ip=$1
+    local vsm_ip=$2
+    local vsm_iso_image=$3
+    local ovf_env_file=$DATA_DIR/quantum/cisco/ovf-env.xml
+
+    if [[ -f $ovf_env_file ]]; then
+        rm $ovf_env_file
+    fi
+    cat > $ovf_env_file <<-EOF
+        <?xml version="1.0" encoding="UTF-8"?>
+        <Environment
+            xmlns="http://schemas.dmtf.org/ovf/environment/1"
+            xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+            xmlns:oe="http://schemas.dmtf.org/ovf/environment/1"
+            xmlns:ve="http://www.vmware.com/schema/ovfenv"
+            oe:id="">
+            <PlatformSection>
+                <Kind>KVM</Kind>
+                <Locale>en</Locale>
+            </PlatformSection>
+            <PropertySection>
+            <Property oe:key="DomainId" oe:value="1"/>
+            <Property oe:key="EnableTelnet" oe:value="True"/>
+            <Property oe:key="GatewayIpV4" oe:value="$vsm_tap_ip"/>
+            <Property oe:key="HostName" oe:value="OSVSM"/>
+            <Property oe:key="ManagementIpV4" oe:value="$vsm_ip"/>
+            <Property oe:key="ManagementIpV4Subnet" oe:value="255.255.255.0"/>
+            <Property oe:key="OvfDeployment" oe:value="installer"/>
+            <Property oe:key="SvsMode" oe:value="L3"/>
+            <Property oe:key="Password" oe:value="$Q_CISCO_PLUGIN_VSM_PASSWORD"/>
+            <Property oe:key="HARole" oe:value="standalone"/>
+            </PropertySection> \n'
+        </Environment> \n'
+	EOF
+    
+    local mntdir=$(mktemp -d)
+    local ddir=$(mktemp -d)
+    sudo /bin/mount -o loop -t iso9660 $Q_CISCO_PLUGIN_VSM_ISO_IMAGE $mntdir
+    cp -r $mntdir/* $ddir
+    sudo /bin/umount $mntdir
+    cp $ovf_env_file $ddir
+    if [[ -f $ddir/isolinux/isolinux.bin ]]; then
+        (cd $ddir; sudo /usr/bin/mkisofs -uid 0 -gid 0 -J -R -A Cisco_Nexus_1000V_VSM -b isolinux/isolinux.bin -no-emul-boot -boot-load-size 4 -boot-info-table -o $vsm_iso_image .)
+    else
+        (cd $ddir; sudo /usr/bin/mkisofs -uid 0 -gid 0 -J -R -A Cisco_Nexus_1000V_VSM -b boot/grub/iso9660_stage1_5 -no-emul-boot -boot-load-size 4 -boot-info-table -o $vsm_iso_image .)
+    fi
+}
+
+function _get_vsm_net() {
+    first=$(echo $Q_CISCO_PLUGIN_VSM_IP | sed -n 's/^\([0-9]\{1,3\}\)\.\([0-9]\{1,3\}\)\.\([0-9]\{1,3\}\)\.[0-9]\{1,3\}$/\1/p')
+    second=$(echo $Q_CISCO_PLUGIN_VSM_IP | sed -n 's/^\([0-9]\{1,3\}\)\.\([0-9]\{1,3\}\)\.\([0-9]\{1,3\}\)\.[0-9]\{1,3\}$/\2/p')
+    third=$(echo $Q_CISCO_PLUGIN_VSM_IP | sed -n 's/^\([0-9]\{1,3\}\)\.\([0-9]\{1,3\}\)\.\([0-9]\{1,3\}\)\.[0-9]\{1,3\}$/\3/p')
+    if [[ -z $first || -z $second || -z $third ]]; then
+        die $LINENO "Incorrect network address: $Q_CISCO_PLUGIN_VSM_IP"
+    fi
+
+    declare -i f=$first
+    declare -i s=$second
+    declare -i t=$third
+    if (( $f > 255 || $s > 255 || $t > 255 )); then
+        die $LINENO "Incorrect network address: $Q_CISCO_PLUGIN_VSM_IP"
+    fi
+    echo $first.$second.$third
+}
+
+# This routine retrieves the domain id and the primary mac address from the VSM
+function _get_vsm_info () {
+    # Node: no code with output should be added here. The caller depends on the
+    # output from the below expect output
+    vsm_ip_addr=$1 user=$2 passwd=$3 expect -c '
+        spawn /usr/bin/telnet $env(vsm_ip_addr)
+        set timeout 240
+        expect {
+            -re "Trying.*Connected.*Escape.*Nexus .*login: " {
+                send "$env(user)\n"
+                exp_continue
+                #look for the password prompt
+            }
+
+            "*?assword:*" {
+                send "$env(passwd)\n"
+            }
+        }
+        expect {
+            -re ".*# " {
+                send "show interface control 0\n"
+                expect -indices -re ".*# "
+                puts [string range $expect_out(buffer) \
+                           0 [expr $expect_out(0,start) - 1]]
+                send "show svs domain\n"
+                expect -indices -re ".*# "
+                puts [string range $expect_out(buffer) \
+                           0 [expr $expect_out(0,start) - 1]]
+            }
+        }' | sed -n -e 's/  Hardware: Ethernet, address: \(..\)\(..\)\.\(..\)\(..\)\.\(..\)\(..\).*/\1:\2:\3:\4:\5:\6/p' -e 's/  Domain id: *\(\d*\)/\1/p'
+    # Node: no code with output should be added here. The caller depends on the
+    # output from the above expect output
+}
+
+function _config_vsm() {
+    vsm_ip_addr=$1 user=$2 passwd=$3 expect -c '
+	spawn /usr/bin/telnet $env(vsm_ip_addr)
+	expect {
+	    -re "Trying.*Connected.*Escape.*Nexus .*login: " {
+	        send "$env(user)\n"
+	        exp_continue
+	        #look for the password prompt
+	    }
+
+	    "*?assword:*" {
+	        send "$env(passwd)\n"
+	    }
+        }
+        expect -re ".*# " 
+
+	send "config te\n"
+	expect -re ".*# "
+
+	send "feature network-segmentation-manager\n" 
+	expect -re ".*# "
+
+	send "fabric-network test\n" 
+	expect -re ".*# "
+
+        send "exit\n"
+	expect -re ".*# "
+
+        send "port-profile test-profile\n"
+	expect -re ".*# "
+
+        send "no shut\n"
+	expect -re ".*# "
+
+        send "publish port-profile\n"
+	expect -re ".*# "
+
+        send "end\n"
+        expect -re ".*# "
+
+        send "exit\n"
+    '
+}
+
+function send_vsm_arp() {
+    set +o xtrace
+    while true; do
+        sudo arping -U -A -c 3 -q -I $Q_CISCO_PLUGIN_HOST_MGMT_INTF $Q_CISCO_PLUGIN_VSM_IP
+        sleep 5
+    done    
+}
+
 # This routine creates a virtual machine that runs VSM
 function _create_devstack_vsm() {
     local vsm_image_file=$DATA_DIR/quantum/cisco/DEVSTACK_VSM.img
+    local vsm_iso_image
     local vsm_xml_file=$DATA_DIR/quantum/cisco/DEVSTACK_VSM.xml
+    local vsm_arp_proc=$DATA_DIR/quantum/cisco/vsm_arp_proc
+    local vsm_ip
+    local vsm_tap_ip
+    local vsm_net
     local vsm_state
     local recreate=no
+    local config_vsm=False
 
     # Intall krdc package. krdc is used to connect to the VSM desktop/console
     install_package krdc
@@ -453,20 +620,26 @@ function _create_devstack_vsm() {
         die $LINENO "Can't find the VSM iso image file $Q_CISCO_PLUGIN_VSM_ISO_IMAGE!"
     fi
 
+    vsm_iso_image=$DATA_DIR/quantum/cisco/$(basename Q_CISCO_PLUGIN_VSM_ISO_IMAGE)
+
     if [[ ! -d $DATA_DIR/quantum/cisco ]]; then
         mkdir -p $DATA_DIR/quantum/cisco
     fi
 
-    # Creat the VSM disk image file
-    if [[ ! -f $vsm_image_file ]]; then
-        sudo qemu-img create $vsm_image_file 8G
+    vsm_net=$(_get_vsm_net)
+    declare -i vsm_ip=${Q_CISCO_PLUGIN_VSM_IP/#$vsm_net./}
+    local vsm_tap_ip
+    if [[ $vsm_ip != 1 ]]; then
+        vsm_tap_ip=${vsm_net}.1
+    else 
+        vsm_tap_ip=${vsm_net}.2
     fi
 
     vsm_state=$(_get_vsm_state)
 
     # Check if the vsm image is changed
     if [[ -f $vsm_xml_file ]]; then
-        matched=$(grep -c -m 1 "<source file='$Q_CISCO_PLUGIN_VSM_ISO_IMAGE'/>" $vsm_xml_file)
+        matched=$(grep -c -m 1 "<source file='$vsm_image_file'/>" $vsm_xml_file)
         # The image file is changed; the VM needs to be recreated
         if [[ "$matched" == "0" ]]; then
             recreate=yes
@@ -479,6 +652,8 @@ function _create_devstack_vsm() {
         sudo virsh destroy DEVSTACK_VSM
         if [[ "$recreate" == "yes" ]]; then
             sudo virsh undefine DEVSTACK_VSM
+            rm $vsm_iso_image
+            rm $vsm_image_file
         fi
     fi
 
@@ -488,6 +663,17 @@ function _create_devstack_vsm() {
     if [[ -z $vsm_state ]]; then
         local vsm_uuid=$(uuidgen -t)
         local libvirt_type=$LIBVIRT_TYPE
+
+        config_vsm=True
+        # Prepare for the iso image with ovf-env.xml inserted
+        if [[ ! -f $vsm_iso_image ]]; then
+            _repackage_iso_with_ovfenv $vsm_tap_ip $Q_CISCO_PLUGIN_VSM_IP $vsm_iso_image
+        fi
+
+        # Create the VSM disk image file
+        if [[ ! -f $vsm_image_file ]]; then
+            sudo qemu-img create $vsm_image_file 8G
+        fi
 
         # Determine the libvirt type
         if [[ "$libvirt_type" == "kvm" ]]; then
@@ -532,7 +718,7 @@ function _create_devstack_vsm() {
 	            </disk>
 	            <disk type='file' device='cdrom'>
 	                <driver name='qemu' type='raw'/>
-	                <source file='$Q_CISCO_PLUGIN_VSM_ISO_IMAGE'/>
+	                <source file='$vsm_iso_image'/>
 	                <target dev='hdb' bus='ide'/>
 	                <readonly/>
 	                <alias name='ide0-0-1'/>
@@ -615,27 +801,41 @@ function _create_devstack_vsm() {
         sudo ip link set ds-vsm-veth up
         sudo ip link set ds-vsm-veth promisc on
         sudo brctl addif ds-vsm-bridge tap-ds-vsm
-        sudo ip -4 addr add $Q_CISCO_PLUGIN_TAP_VSM_IP dev ds-vsm-veth
+        sudo ip -4 addr add $vsm_tap_ip/24 dev ds-vsm-veth
 
-        # In multi-host environment, link the veth pair with the host management
-        # interface by setting up arp proxy. By doing so, establish
-        # communication between the VSM and all the other compute nodes.
-        if [[ "$MULTI_HOST" == "True" ]]; then
-            install_package parprouted
-            local running=$(ps --no-headers -o cmd -C parprouted | grep "parprouted $Q_CISCO_PLUGIN_HOST_MGMT_INTF ds-vsm-veth")
-            if [[ -z $running ]]; then
-                sudo parprouted $Q_CISCO_PLUGIN_HOST_MGMT_INTF ds-vsm-veth&
-                disown %%
-            fi
-        fi
         if sudo virsh start DEVSTACK_VSM; then
             _open_vsm_console
         fi
-        _wait_for_vsm_to_comeup
+        _wait_for_vsm_to_comeup $Q_CISCO_PLUGIN_VSM_IP $Q_CISCO_PLUGIN_VSM_USERNAME $Q_CISCO_PLUGIN_VSM_PASSWORD
+
+	# In multi-host environment, send gratuitous arp to the management
+	# network so that the compute nodes can reach the VSM
+        MULTI_HOST=`trueorfalse False $MULTI_HOST`
+        if [[ "$MULTI_HOST" == "True" ]]; then
+            local send_arp=True
+            if [[ -e $vsm_arp_proc ]]; then
+                local vsm_arp_proc_pid=$(echo $vsm_arp_proc | cut -d" " -f1)
+                local vsm_ipaddr=$(cat $vsm_arp_proc | cut -d" " -f2)
+                local cmd = $(ps --no-headers -p $vsm_arp_proc_pid -o cmd)
+                if [[ -n $cmd  && $vsm_ipaddr != $Q_CISCO_PLUGIN_VSM_IP ]]; then
+                    kill $vsm_ipaddr
+                else 
+                    send_arp=False
+                fi
+            fi
+            if [[ $send_arp == "True" ]]; then
+                send_vsm_arp&
+                disown %%
+                echo "$! $Q_CISCO_PLUGIN_VSM_IP" > $vsm_arp_proc
+            fi
+        fi
     else
         if ! _is_vsm_console_on; then
             _open_vsm_console
         fi
+    fi
+    if [[ "$config_vsm" == "True" ]]; then
+        _config_vsm $Q_CISCO_PLUGIN_VSM_IP $Q_CISCO_PLUGIN_VSM_USERNAME $Q_CISCO_PLUGIN_VSM_PASSWORD
     fi
 }
 
@@ -752,40 +952,6 @@ function n1k_iniset() {
     fi
 }
 
-# This routine retrieves the domain id and the primary mac address from the VSM
-function _get_vsm_info () {
-    # Node: no code with output should be added here. The caller depends on the
-    # output from the below expect output
-    vsm_ip_addr=$1 user=$2 passwd=$3 expect -c '
-        spawn /usr/bin/ssh $env(user)@$env(vsm_ip_addr)
-        set timeout 240
-        expect {
-            -re ".*Are.*.*yes.*no.*" {
-                send "yes\n"
-                exp_continue
-                #look for the password prompt
-            }
-
-            "*?assword:*" {
-                send "$env(passwd)\n"
-            }
-        }
-        expect {
-            -re ".*# " {
-                send "show interface control 0\n"
-                expect -indices -re ".*# "
-                puts [string range $expect_out(buffer) \
-                           0 [expr $expect_out(0,start) - 1]]
-                send "show svs domain\n"
-                expect -indices -re ".*# "
-                puts [string range $expect_out(buffer) \
-                           0 [expr $expect_out(0,start) - 1]]
-            }
-        }' | sed -n -e 's/  Hardware: Ethernet, address: \(..\)\(..\)\.\(..\)\(..\)\.\(..\)\(..\).*/\1:\2:\3:\4:\5:\6/p' -e 's/  Domain id: *\(\d*\)/\1/p'
-    # Node: no code with output should be added here. The caller depends on the
-    # output from the above expect output
-}
-
 # Configure n1kv plugin
 function _configure_n1kv_subplugin() {
     local cisco_cfg_file=$1
@@ -832,10 +998,17 @@ function _configure_uvem() {
         cp $N1KV_CONF $n1kv_temp_file
     fi
 
+    # install a route to VSM on a compute node
+    if ! is_service_enabled q-svc ; then
+        local vsm_net=$(_get_vsm_net)
+        sudo ip route add ${vsm_net}.0/24 dev $Q_CISCO_PLUGIN_HOST_MGMT_INTF
+        if [[ $? != 0 && $? != 2 ]]; then
+            die $LINENO "Cannot add route to the VSM"
+        fi
+    fi
+
     # Wait for VSM to come up before requesting information from it
-    _wait_for_vsm_to_comeup
-    # To make sure that ssh key is always up to date, remove the entry
-    ssh-keygen -f ~/.ssh/known_hosts -R $Q_CISCO_PLUGIN_VSM_IP
+    _wait_for_vsm_to_comeup $Q_CISCO_PLUGIN_VSM_IP $Q_CISCO_PLUGIN_VSM_USERNAME $Q_CISCO_PLUGIN_VSM_PASSWORD
     local vsm_info=($(_get_vsm_info $Q_CISCO_PLUGIN_VSM_IP $Q_CISCO_PLUGIN_VSM_USERNAME $Q_CISCO_PLUGIN_VSM_PASSWORD))
 
     if [[ "${vsm_info[1]}" != "" ]]; then
