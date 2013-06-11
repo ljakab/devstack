@@ -545,7 +545,8 @@ function _get_vsm_info () {
     # output from the above expect output
 }
 
-function _config_vsm() {
+function _configure_vsm() {
+    install_package expect
     vsm_ip_addr=$1 user=$2 passwd=$3 expect -c '
 	spawn /usr/bin/telnet $env(vsm_ip_addr)
 	expect {
@@ -591,6 +592,7 @@ function _config_vsm() {
 
 function send_vsm_arp() {
     set +o xtrace
+    sudo sysctl -w net.ipv4.ip_nonlocal_bind=1
     while true; do
         sudo arping -U -A -c 3 -q -I $Q_CISCO_PLUGIN_HOST_MGMT_INTF $Q_CISCO_PLUGIN_VSM_IP
         sleep 5
@@ -814,13 +816,15 @@ function _create_devstack_vsm() {
         if [[ "$MULTI_HOST" == "True" ]]; then
             local send_arp=True
             if [[ -e $vsm_arp_proc ]]; then
-                local vsm_arp_proc_pid=$(echo $vsm_arp_proc | cut -d" " -f1)
+                local vsm_arp_proc_pid=$(cat $vsm_arp_proc | cut -d" " -f1)
                 local vsm_ipaddr=$(cat $vsm_arp_proc | cut -d" " -f2)
                 local cmd = $(ps --no-headers -p $vsm_arp_proc_pid -o cmd)
-                if [[ -n $cmd  && $vsm_ipaddr != $Q_CISCO_PLUGIN_VSM_IP ]]; then
-                    kill $vsm_ipaddr
-                else 
-                    send_arp=False
+                if [[ -n $cmd ]]; then
+                    if [[ $vsm_ipaddr != $Q_CISCO_PLUGIN_VSM_IP ]]; then
+                        kill $vsm_arp_proc_pid
+                    else 
+                        send_arp=False
+                    fi
                 fi
             fi
             if [[ $send_arp == "True" ]]; then
@@ -835,7 +839,7 @@ function _create_devstack_vsm() {
         fi
     fi
     if [[ "$config_vsm" == "True" ]]; then
-        _config_vsm $Q_CISCO_PLUGIN_VSM_IP $Q_CISCO_PLUGIN_VSM_USERNAME $Q_CISCO_PLUGIN_VSM_PASSWORD
+        _configure_vsm $Q_CISCO_PLUGIN_VSM_IP $Q_CISCO_PLUGIN_VSM_USERNAME $Q_CISCO_PLUGIN_VSM_PASSWORD
     fi
 }
 
