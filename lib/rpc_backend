@@ -30,7 +30,7 @@ function check_rpc_backend() {
     # that can be passed as arguments to is_service_enabled.
     # We check for a call to iniset_rpc_backend in these files, meaning
     # the service needs a backend.
-    rpc_candidates=$(grep -rl iniset_rpc_backend . | awk -F/ '{print $NF}')
+    rpc_candidates=$(grep -rl iniset_rpc_backend $TOP_DIR/lib/ | awk -F/ '{print $NF}')
     for c in ${rpc_candidates}; do
         if is_service_enabled $c; then
             rpc_needed=0
@@ -70,11 +70,7 @@ function cleanup_rpc_backend {
         fi
     elif is_service_enabled qpid; then
         if is_fedora; then
-            if [[ $DISTRO =~ (rhel6) ]]; then
-                uninstall_package qpid-cpp-server
-            else
-                uninstall_package qpid-cpp-server-daemon
-            fi
+            uninstall_package qpid-cpp-server
         elif is_ubuntu; then
             uninstall_package qpidd
         else
@@ -82,14 +78,18 @@ function cleanup_rpc_backend {
         fi
     elif is_service_enabled zeromq; then
         if is_fedora; then
-            uninstall_package zeromq python-zmq
+            uninstall_package zeromq python-zmq redis
         elif is_ubuntu; then
-            uninstall_package libzmq1 python-zmq
+            uninstall_package libzmq1 python-zmq redis-server
         elif is_suse; then
-            uninstall_package libzmq1 python-pyzmq
+            uninstall_package libzmq1 python-pyzmq redis
         else
             exit_distro_not_supported "zeromq installation"
         fi
+
+        # Necessary directory for socket location.
+        sudo mkdir -p /var/run/openstack
+        sudo chown $STACK_USER /var/run/openstack
     fi
 }
 
@@ -104,15 +104,12 @@ function install_rpc_backend() {
         rm -f "$tfile"
     elif is_service_enabled qpid; then
         if is_fedora; then
+            install_package qpid-cpp-server
             if [[ $DISTRO =~ (rhel6) ]]; then
-                install_package qpid-cpp-server
-
                # RHEL6 leaves "auth=yes" in /etc/qpidd.conf, it needs to
                # be no or you get GSS authentication errors as it
                # attempts to default to this.
                 sudo sed -i.bak 's/^auth=yes$/auth=no/' /etc/qpidd.conf
-            else
-                install_package qpid-cpp-server-daemon
             fi
         elif is_ubuntu; then
             install_package qpidd
@@ -122,12 +119,15 @@ function install_rpc_backend() {
             exit_distro_not_supported "qpid installation"
         fi
     elif is_service_enabled zeromq; then
+        # NOTE(ewindisch): Redis is not strictly necessary
+        # but there is a matchmaker driver that works
+        # really well & out of the box for multi-node.
         if is_fedora; then
-            install_package zeromq python-zmq
+            install_package zeromq python-zmq redis
         elif is_ubuntu; then
-            install_package libzmq1 python-zmq
+            install_package libzmq1 python-zmq redis-server
         elif is_suse; then
-            install_package libzmq1 python-pyzmq
+            install_package libzmq1 python-pyzmq redis
         else
             exit_distro_not_supported "zeromq installation"
         fi
@@ -145,6 +145,13 @@ function restart_rpc_backend() {
         fi
         # change the rabbit password since the default is "guest"
         sudo rabbitmqctl change_password guest $RABBIT_PASSWORD
+        if is_service_enabled n-cell; then
+            # Add partitioned access for the child cell
+            if [ -z `sudo rabbitmqctl list_vhosts | grep child_cell` ]; then
+                sudo rabbitmqctl add_vhost child_cell
+                sudo rabbitmqctl set_permissions -p child_cell guest ".*" ".*" ".*"
+            fi
+        fi
     elif is_service_enabled qpid; then
         echo_summary "Starting qpid"
         restart_service qpidd
@@ -158,6 +165,11 @@ function iniset_rpc_backend() {
     local section=$3
     if is_service_enabled zeromq; then
         iniset $file $section rpc_backend ${package}.openstack.common.rpc.impl_zmq
+        iniset $file $section rpc_zmq_matchmaker \
+            ${package}.openstack.common.rpc.matchmaker_redis.MatchMakerRedis
+        # Set MATCHMAKER_REDIS_HOST if running multi-node.
+        MATCHMAKER_REDIS_HOST=${MATCHMAKER_REDIS_HOST:-127.0.0.1}
+        iniset $file matchmaker_redis host $MATCHMAKER_REDIS_HOST
     elif is_service_enabled qpid; then
         iniset $file $section rpc_backend ${package}.openstack.common.rpc.impl_qpid
         if is_ubuntu; then

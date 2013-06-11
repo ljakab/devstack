@@ -1,5 +1,5 @@
 dnsmasq-base
-dnsmasq-utils # for dhcp_release only available in dist:oneiric,precise,quantal
+dnsmasq-utils # for dhcp_release
 kpartx
 parted
 iputils-arping
@@ -12,7 +12,8 @@ iptables
 ebtables
 sqlite3
 sudo
-kvm
+kvm # NOPRIME
+qemu # dist:wheezy,jessie NOPRIME
 libvirt-bin # NOPRIME
 libjs-jquery-tablesorter # Needed for coverage html reports
 vlan
@@ -26,7 +27,7 @@ python-paste
 python-migrate
 python-gflags
 python-greenlet
-python-libvirt
+python-libvirt # NOPRIME
 python-libxml2
 python-routes
 python-netaddr

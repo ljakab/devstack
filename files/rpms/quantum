@@ -4,6 +4,7 @@ ebtables
 iptables
 iputils
 mysql-server # NOPRIME
+openvswitch # NOPRIME
 python-boto
 python-eventlet
 python-greenlet
@@ -18,8 +19,7 @@ python-routes
 python-sqlalchemy
 python-suds
 rabbitmq-server # NOPRIME
-qpid-cpp-server-daemon # NOPRIME dist:f16,f17,f18
-qpid-cpp-server        # NOPRIME dist:rhel6
+qpid-cpp-server        # NOPRIME
 sqlite
 sudo
 vconfig

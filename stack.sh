@@ -33,6 +33,43 @@ source $TOP_DIR/functions
 GetDistro
 
 
+# Configure non-default repos
+# ===========================
+
+# Repo configuration needs to occur before package installation.
+
+# Some dependencies are not available in Debian Wheezy official
+# repositories. However, it's possible to run OpenStack from gplhost
+# repository.
+if [[ "$os_VENDOR" =~ (Debian) ]]; then
+    echo 'deb http://archive.gplhost.com/debian grizzly main' | sudo tee /etc/apt/sources.list.d/gplhost_wheezy-backports.list
+    echo 'deb http://archive.gplhost.com/debian grizzly-backports main' | sudo tee -a /etc/apt/sources.list.d/gplhost_wheezy-backports.list
+    apt_get update
+    apt_get install --force-yes gplhost-archive-keyring
+fi
+
+# Installing Open vSwitch on RHEL6 requires enabling the RDO repo.
+RHEL6_RDO_REPO_RPM=${RHEL6_RDO_REPO_RPM:-"http://rdo.fedorapeople.org/openstack/openstack-grizzly/rdo-release-grizzly-3.noarch.rpm"}
+RHEL6_RDO_REPO_ID=${RHEL6_RDO_REPO_ID:-"openstack-grizzly"}
+# RHEL6 requires EPEL for many Open Stack dependencies
+RHEL6_EPEL_RPM=${RHEL6_EPEL_RPM:-"http://dl.fedoraproject.org/pub/epel/6/x86_64/epel-release-6-8.noarch.rpm"}
+
+if [[ is_fedora && $DISTRO =~ (rhel6) ]]; then
+
+    if ! yum repolist enabled $RHEL6_RDO_REPO_ID | grep -q $RHEL6_RDO_REPO_ID; then
+        echo "RDO repo not detected; installing"
+        yum_install $RHEL6_RDO_REPO_RPM || \
+            die $LINENO "Error installing RDO repo, cannot continue"
+    fi
+
+    if ! yum repolist enabled epel | grep -q 'epel'; then
+        echo "EPEL not detected; installing"
+        yum_install ${RHEL6_EPEL_RPM} || \
+            die $LINENO "Error installing EPEL repo, cannot continue"
+    fi
+
+fi
+
 # Global Settings
 # ===============
 
@@ -105,7 +142,7 @@ disable_negated_services
 
 # Warn users who aren't on an explicitly supported distro, but allow them to
 # override check and attempt installation with ``FORCE=yes ./stack``
-if [[ ! ${DISTRO} =~ (oneiric|precise|quantal|raring|f16|f17|f18|opensuse-12.2|rhel6) ]]; then
+if [[ ! ${DISTRO} =~ (oneiric|precise|quantal|raring|saucy|7.0|wheezy|sid|testing|jessie|f16|f17|f18|opensuse-12.2|rhel6) ]]; then
     echo "WARNING: this script has not been tested on $DISTRO"
     if [[ "$FORCE" != "yes" ]]; then
         die $LINENO "If you wish to run this script anyway run with FORCE=yes"
@@ -116,7 +153,6 @@ fi
 # and the specified rpc backend is available on your platform.
 check_rpc_backend
 
-SCREEN_NAME=${SCREEN_NAME:-stack}
 # Check to see if we are already running DevStack
 # Note that this may fail if USE_SCREEN=False
 if type -p screen >/dev/null && screen -ls | egrep -q "[0-9].$SCREEN_NAME"; then
@@ -199,6 +235,9 @@ fi
 sudo mkdir -p $DEST
 sudo chown -R $STACK_USER $DEST
 
+# a basic test for $DEST path permissions (fatal on error unless skipped)
+check_path_perm_sanity ${DEST}
+
 # Set ``OFFLINE`` to ``True`` to configure ``stack.sh`` to run cleanly without
 # Internet access. ``stack.sh`` must have been previously run with Internet
 # access to install prerequisites and fetch repositories.
@@ -273,6 +312,7 @@ source $TOP_DIR/lib/ldap
 
 # Set the destination directories for OpenStack projects
 OPENSTACKCLIENT_DIR=$DEST/python-openstackclient
+PBR_DIR=$DEST/pbr
 
 
 # Interactive Configuration
@@ -550,6 +590,12 @@ fi
 # ============================
 
 if [[ is_fedora && $DISTRO =~ (rhel6) ]]; then
+    # Avoid having to configure selinux to allow things like httpd to
+    # access horizion files or run binaries like nodejs (LP#1175444)
+    if selinuxenabled; then
+        sudo setenforce 0
+    fi
+
     # An old version (2.0.1) of python-crypto is probably installed on
     # a fresh system, via the dependency chain
     # cas->python-paramiko->python-crypto (related to anaconda).
@@ -579,6 +625,26 @@ if [[ is_fedora && $DISTRO =~ (rhel6) ]]; then
     # Nova stopping later on complaining that
     # '/var/lib/dbus/machine-id' doesn't exist.
     sudo service messagebus restart
+
+    # In setup.py, a "setup_requires" package is supposed to
+    # transient.  However there is a bug with rhel6 distribute where
+    # setup_requires packages can register entry points that aren't
+    # cleared out properly after the setup-phase; the end result is
+    # installation failures (bz#924038).  Thus we pre-install the
+    # problem package here; this way the setup_requires dependency is
+    # already satisfied and it will not need to be installed
+    # transiently, meaning we avoid the issue of it not being cleaned
+    # out properly.  Note we do this before the track-depends below.
+    pip_install hgtools
+
+    # The version of python-nose in the RHEL6 repo is incompatible
+    # with Tempest.  As a workaround:
+
+    # Install nose 1.1 (Tempest-compatible) from EPEL
+    install_package python-nose1.1
+    # Add a symlink for the new nosetests to allow tox for Tempest to
+    # work unmolested.
+    sudo ln -sf /usr/bin/nosetests1.1 /usr/local/bin/nosetests
 fi
 
 TRACK_DEPENDS=${TRACK_DEPENDS:-False}
@@ -598,6 +664,10 @@ fi
 # ----------------------------
 
 echo_summary "Installing OpenStack project source"
+
+# Install pbr
+git_clone $PBR_REPO $PBR_DIR $PBR_BRANCH
+setup_develop $PBR_DIR
 
 # Install clients libraries
 install_keystoneclient
@@ -720,6 +790,22 @@ EOF
 EOF
         sudo mv /tmp/90-stack-s.conf /etc/rsyslog.d
     fi
+
+    RSYSLOGCONF="/etc/rsyslog.conf"
+    if [ -f $RSYSLOGCONF ]; then
+        sudo cp -b $RSYSLOGCONF $RSYSLOGCONF.bak
+        if [[ $(grep '$SystemLogRateLimitBurst' $RSYSLOGCONF)  ]]; then
+            sudo sed -i 's/$SystemLogRateLimitBurst\ .*/$SystemLogRateLimitBurst\ 0/' $RSYSLOGCONF
+        else
+            sudo sed -i '$ i $SystemLogRateLimitBurst\ 0' $RSYSLOGCONF
+        fi
+        if [[ $(grep '$SystemLogRateLimitInterval' $RSYSLOGCONF)  ]]; then
+            sudo sed -i 's/$SystemLogRateLimitInterval\ .*/$SystemLogRateLimitInterval\ 0/' $RSYSLOGCONF
+        else
+            sudo sed -i '$ i $SystemLogRateLimitInterval\ 0' $RSYSLOGCONF
+        fi
+    fi
+
     echo_summary "Starting rsyslog"
     restart_service rsyslog
 fi
@@ -924,8 +1010,6 @@ if is_service_enabled nova; then
         echo_summary "Using XenServer virtualization driver"
         read_password XENAPI_PASSWORD "ENTER A PASSWORD TO USE FOR XEN."
         iniset $NOVA_CONF DEFAULT compute_driver "xenapi.XenAPIDriver"
-        XENAPI_CONNECTION_URL=${XENAPI_CONNECTION_URL:-"http://169.254.0.1"}
-        XENAPI_USER=${XENAPI_USER:-"root"}
         iniset $NOVA_CONF DEFAULT xenapi_connection_url "$XENAPI_CONNECTION_URL"
         iniset $NOVA_CONF DEFAULT xenapi_connection_username "$XENAPI_USER"
         iniset $NOVA_CONF DEFAULT xenapi_connection_password "$XENAPI_PASSWORD"
@@ -997,6 +1081,27 @@ if is_service_enabled nova; then
         iniset $NOVA_CONF DEFAULT vmwareapi_host_password "$VMWAREAPI_PASSWORD"
         iniset $NOVA_CONF DEFAULT vmwareapi_cluster_name "$VMWAREAPI_CLUSTER"
 
+    # fake
+    # -----
+
+    elif [ "$VIRT_DRIVER" = 'fake' ]; then
+        echo_summary "Using fake Virt driver"
+        iniset $NOVA_CONF DEFAULT compute_driver "nova.virt.fake.FakeDriver"
+        # Disable arbitrary limits
+        iniset $NOVA_CONF DEFAULT quota_instances -1
+        iniset $NOVA_CONF DEFAULT quota_cores -1
+        iniset $NOVA_CONF DEFAULT quota_ram -1
+        iniset $NOVA_CONF DEFAULT quota_floating_ips -1
+        iniset $NOVA_CONF DEFAULT quota_fixed_ips -1
+        iniset $NOVA_CONF DEFAULT quota_metadata_items -1
+        iniset $NOVA_CONF DEFAULT quota_injected_files -1
+        iniset $NOVA_CONF DEFAULT quota_injected_file_path_bytes -1
+        iniset $NOVA_CONF DEFAULT quota_security_groups -1
+        iniset $NOVA_CONF DEFAULT quota_security_group_rules -1
+        iniset $NOVA_CONF DEFAULT quota_key_pairs -1
+        iniset $NOVA_CONF DEFAULT scheduler_default_filters "RetryFilter,AvailabilityZoneFilter,ComputeFilter,ComputeCapabilitiesFilter,ImagePropertiesFilter"
+
+
     # Default
     # -------
 
@@ -1006,6 +1111,8 @@ if is_service_enabled nova; then
         LIBVIRT_FIREWALL_DRIVER=${LIBVIRT_FIREWALL_DRIVER:-"nova.virt.libvirt.firewall.IptablesFirewallDriver"}
         iniset $NOVA_CONF DEFAULT firewall_driver "$LIBVIRT_FIREWALL_DRIVER"
     fi
+
+    init_nova_cells
 fi
 
 # Extra things to prepare nova for baremetal, before nova starts
@@ -1066,14 +1173,19 @@ if is_service_enabled q-svc; then
     create_quantum_initial_network
     setup_quantum_debug
 elif is_service_enabled $DATABASE_BACKENDS && is_service_enabled n-net; then
+    NM_CONF=${NOVA_CONF}
+    if is_service_enabled n-cell; then
+        NM_CONF=${NOVA_CELLS_CONF}
+    fi
+
     # Create a small network
-    $NOVA_BIN_DIR/nova-manage network create "$PRIVATE_NETWORK_NAME" $FIXED_RANGE 1 $FIXED_NETWORK_SIZE $NETWORK_CREATE_ARGS
+    $NOVA_BIN_DIR/nova-manage --config-file $NM_CONF network create "$PRIVATE_NETWORK_NAME" $FIXED_RANGE 1 $FIXED_NETWORK_SIZE $NETWORK_CREATE_ARGS
 
     # Create some floating ips
-    $NOVA_BIN_DIR/nova-manage floating create $FLOATING_RANGE --pool=$PUBLIC_NETWORK_NAME
+    $NOVA_BIN_DIR/nova-manage --config-file $NM_CONF floating create $FLOATING_RANGE --pool=$PUBLIC_NETWORK_NAME
 
     # Create a second pool
-    $NOVA_BIN_DIR/nova-manage floating create --ip_range=$TEST_FLOATING_RANGE --pool=$TEST_FLOATING_POOL
+    $NOVA_BIN_DIR/nova-manage --config-file $NM_CONF floating create --ip_range=$TEST_FLOATING_RANGE --pool=$TEST_FLOATING_POOL
 fi
 
 if is_service_enabled quantum; then

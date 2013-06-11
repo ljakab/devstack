@@ -7,9 +7,9 @@ genisoimage # required for config_drive
 iptables
 iputils
 kpartx
-kvm
+kvm # NOPRIME
 libvirt-bin # NOPRIME
-libvirt-python
+libvirt-python # NOPRIME
 libxml2-python
 numpy # needed by websockify for spice console
 m2crypto
@@ -40,7 +40,7 @@ python-sqlalchemy
 python-suds
 python-tempita
 rabbitmq-server # NOPRIME
-qpid-cpp-server-daemon # NOPRIME
+qpid-cpp-server # NOPRIME
 sqlite
 sudo
 vconfig

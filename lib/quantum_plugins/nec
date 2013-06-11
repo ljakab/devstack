@@ -17,8 +17,6 @@ OFC_DRIVER=${OFC_DRIVER:-trema}
 OFC_RETRY_MAX=${OFC_RETRY_MAX:-0}
 OFC_RETRY_INTERVAL=${OFC_RETRY_INTERVAL:-1}
 
-OVS_BRIDGE=${OVS_BRIDGE:-br-int}
-
 # Main logic
 # ---------------------------
 
@@ -84,6 +82,8 @@ function quantum_plugin_configure_service() {
     iniset /$Q_PLUGIN_CONF_FILE OFC driver $OFC_DRIVER
     iniset /$Q_PLUGIN_CONF_FILE OFC api_retry_max OFC_RETRY_MAX
     iniset /$Q_PLUGIN_CONF_FILE OFC api_retry_interval OFC_RETRY_INTERVAL
+
+    _quantum_ovs_base_configure_firewall_driver
 }
 
 function quantum_plugin_setup_interface_driver() {
@@ -116,6 +116,10 @@ function _quantum_setup_ovs_tunnels() {
 function has_quantum_plugin_security_group() {
     # 0 means True here
     return 0
+}
+
+function quantum_plugin_check_adv_test_requirements() {
+    is_service_enabled q-agt && is_service_enabled q-dhcp && return 0
 }
 
 # Restore xtrace

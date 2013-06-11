@@ -1,15 +1,13 @@
 #!/bin/bash
 
-# This script is a level script
-# It must be run on a XenServer or XCP machine
+# This script must be run on a XenServer or XCP machine
 #
 # It creates a DomU VM that runs OpenStack services
 #
 # For more details see: README.md
 
-# Exit on errors
 set -o errexit
-# Echo commands
+set -o nounset
 set -o xtrace
 
 # Abort if localrc is not set
@@ -31,13 +29,12 @@ THIS_DIR=$(cd $(dirname "$0") && pwd)
 # xapi functions
 . $THIS_DIR/functions
 
-
 #
 # Get Settings
 #
 
 # Source params - override xenrc params in your localrc to suit your taste
-source xenrc
+source $THIS_DIR/xenrc
 
 xe_min()
 {
@@ -70,97 +67,34 @@ create_directory_for_kernels
 #
 # Configure Networking
 #
+setup_network "$VM_BRIDGE_OR_NET_NAME"
+setup_network "$MGT_BRIDGE_OR_NET_NAME"
+setup_network "$PUB_BRIDGE_OR_NET_NAME"
 
-# Helper to create networks
-# Uses echo trickery to return network uuid
-function create_network() {
-    br=$1
-    dev=$2
-    vlan=$3
-    netname=$4
-    if [ -z $br ]
-    then
-        pif=$(xe_min pif-list device=$dev VLAN=$vlan)
-        if [ -z $pif ]
-        then
-            net=$(xe network-create name-label=$netname)
-        else
-            net=$(xe_min network-list  PIF-uuids=$pif)
-        fi
-        echo $net
-        return 0
-    fi
-    if [ ! $(xe_min network-list  params=bridge | grep -w --only-matching $br) ]
-    then
-        echo "Specified bridge $br does not exist"
-        echo "If you wish to use defaults, please keep the bridge name empty"
-        exit 1
-    else
-        net=$(xe_min network-list  bridge=$br)
-        echo $net
-    fi
-}
-
-function errorcheck() {
-    rc=$?
-    if [ $rc -ne 0 ]
-    then
-        exit $rc
-    fi
-}
-
-# Create host, vm, mgmt, pub networks on XenServer
-VM_NET=$(create_network "$VM_BR" "$VM_DEV" "$VM_VLAN" "vmbr")
-errorcheck
-MGT_NET=$(create_network "$MGT_BR" "$MGT_DEV" "$MGT_VLAN" "mgtbr")
-errorcheck
-PUB_NET=$(create_network "$PUB_BR" "$PUB_DEV" "$PUB_VLAN" "pubbr")
-errorcheck
-
-# Helper to create vlans
-function create_vlan() {
-    dev=$1
-    vlan=$2
-    net=$3
-    # VLAN -1 refers to no VLAN (physical network)
-    if [ $vlan -eq -1 ]
-    then
-        return
-    fi
-    if [ -z $(xe_min vlan-list  tag=$vlan) ]
-    then
-        pif=$(xe_min pif-list  network-uuid=$net)
-        # We created a brand new network this time
-        if [ -z $pif ]
-        then
-            pif=$(xe_min pif-list  device=$dev VLAN=-1)
-            xe vlan-create pif-uuid=$pif vlan=$vlan network-uuid=$net
-        else
-            echo "VLAN does not exist but PIF attached to this network"
-            echo "How did we reach here?"
-            exit 1
-        fi
-    fi
-}
-
-# Create vlans for vm and management
-create_vlan $PUB_DEV $PUB_VLAN $PUB_NET
-create_vlan $VM_DEV $VM_VLAN $VM_NET
-create_vlan $MGT_DEV $MGT_VLAN $MGT_NET
-
-# Get final bridge names
-if [ -z $VM_BR ]; then
-    VM_BR=$(xe_min network-list  uuid=$VM_NET params=bridge)
-fi
-if [ -z $MGT_BR ]; then
-    MGT_BR=$(xe_min network-list  uuid=$MGT_NET params=bridge)
-fi
-if [ -z $PUB_BR ]; then
-    PUB_BR=$(xe_min network-list  uuid=$PUB_NET params=bridge)
+# With quantum, one more network is required, which is internal to the
+# hypervisor, and used by the VMs
+if is_service_enabled quantum; then
+    setup_network "$XEN_INT_BRIDGE_OR_NET_NAME"
 fi
 
-# dom0 ip, XenAPI is assumed to be listening
-HOST_IP=${HOST_IP:-`ifconfig xenbr0 | grep "inet addr" | cut -d ":" -f2 | sed "s/ .*//"`}
+if parameter_is_specified "FLAT_NETWORK_BRIDGE"; then
+    cat >&2 << EOF
+ERROR: FLAT_NETWORK_BRIDGE is specified in localrc file
+This is considered as an error, as its value will be derived from the
+VM_BRIDGE_OR_NET_NAME variable's value.
+EOF
+    exit 1
+fi
+
+if ! xenapi_is_listening_on "$MGT_BRIDGE_OR_NET_NAME"; then
+    cat >&2 << EOF
+ERROR: XenAPI does not have an assigned IP address on the management network.
+please review your XenServer network configuration / localrc file.
+EOF
+    exit 1
+fi
+
+HOST_IP=$(xenapi_ip_on "$MGT_BRIDGE_OR_NET_NAME")
 
 # Set up ip forwarding, but skip on xcp-xapi
 if [ -a /etc/sysconfig/network ]; then
@@ -253,11 +187,12 @@ if [ -z "$templateuuid" ]; then
             mkdir -p $HTTP_SERVER_LOCATION
         fi
         cp -f $THIS_DIR/devstackubuntupreseed.cfg $HTTP_SERVER_LOCATION
-        MIRROR=${MIRROR:-""}
-        if [ -n "$MIRROR" ]; then
-            sed -e "s,d-i mirror/http/hostname string .*,d-i mirror/http/hostname string $MIRROR," \
-                -i "${HTTP_SERVER_LOCATION}/devstackubuntupreseed.cfg"
-        fi
+
+        sed \
+            -e "s,\(d-i mirror/http/hostname string\).*,\1 $UBUNTU_INST_HTTP_HOSTNAME,g" \
+            -e "s,\(d-i mirror/http/directory string\).*,\1 $UBUNTU_INST_HTTP_DIRECTORY,g" \
+            -e "s,\(d-i mirror/http/proxy string\).*,\1 $UBUNTU_INST_HTTP_PROXY,g" \
+            -i "${HTTP_SERVER_LOCATION}/devstackubuntupreseed.cfg"
     fi
 
     # Update the template
@@ -265,7 +200,13 @@ if [ -z "$templateuuid" ]; then
 
     # create a new VM with the given template
     # creating the correct VIFs and metadata
-    $THIS_DIR/scripts/install-os-vpx.sh -t "$UBUNTU_INST_TEMPLATE_NAME" -v $VM_BR -m $MGT_BR -p $PUB_BR -l $GUEST_NAME -r $OSDOMU_MEM_MB -k "flat_network_bridge=${VM_BR}"
+    $THIS_DIR/scripts/install-os-vpx.sh \
+        -t "$UBUNTU_INST_TEMPLATE_NAME" \
+        -v "$VM_BRIDGE_OR_NET_NAME" \
+        -m "$MGT_BRIDGE_OR_NET_NAME" \
+        -p "$PUB_BRIDGE_OR_NET_NAME" \
+        -l "$GUEST_NAME" \
+        -r "$OSDOMU_MEM_MB"
 
     # wait for install to finish
     wait_for_VM_to_halt
@@ -303,63 +244,50 @@ fi
 #
 $THIS_DIR/build_xva.sh "$GUEST_NAME"
 
+# Attach a network interface for the integration network (so that the bridge
+# is created by XenServer). This is required for Quantum. Also pass that as a
+# kernel parameter for DomU
+if is_service_enabled quantum; then
+    add_interface "$GUEST_NAME" "$XEN_INT_BRIDGE_OR_NET_NAME" "4"
+
+    XEN_INTEGRATION_BRIDGE=$(bridge_for "$XEN_INT_BRIDGE_OR_NET_NAME")
+    append_kernel_cmdline \
+        "$GUEST_NAME" \
+        "xen_integration_bridge=${XEN_INTEGRATION_BRIDGE}"
+fi
+
+FLAT_NETWORK_BRIDGE=$(bridge_for "$VM_BRIDGE_OR_NET_NAME")
+append_kernel_cmdline "$GUEST_NAME" "flat_network_bridge=${FLAT_NETWORK_BRIDGE}"
+
 # create a snapshot before the first boot
 # to allow a quick re-run with the same settings
 xe vm-snapshot vm="$GUEST_NAME" new-name-label="$SNAME_FIRST_BOOT"
-
 
 #
 # Run DevStack VM
 #
 xe vm-start vm="$GUEST_NAME"
 
-
-#
-# Find IP and optionally wait for stack.sh to complete
-#
-
-function find_ip_by_name() {
-  local guest_name="$1"
-  local interface="$2"
-  local period=10
-  max_tries=10
-  i=0
-  while true
-  do
-    if [ $i -ge $max_tries ]; then
-      echo "Timed out waiting for devstack ip address"
-      exit 11
-    fi
-
-    devstackip=$(xe vm-list --minimal \
-                 name-label=$guest_name \
-                 params=networks | sed -ne "s,^.*${interface}/ip: \([0-9.]*\).*\$,\1,p")
-    if [ -z "$devstackip" ]
-    then
-      sleep $period
-      ((i++))
-    else
-      echo $devstackip
-      break
-    fi
-  done
-}
-
 function ssh_no_check() {
     ssh -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no "$@"
 }
 
-# Note the XenServer needs to be on the chosen
-# network, so XenServer can access Glance API
+# Get hold of the Management IP of OpenStack VM
+OS_VM_MANAGEMENT_ADDRESS=$MGT_IP
+if [ $OS_VM_MANAGEMENT_ADDRESS == "dhcp" ]; then
+    OS_VM_MANAGEMENT_ADDRESS=$(find_ip_by_name $GUEST_NAME 2)
+fi
+
+# Get hold of the Service IP of OpenStack VM
 if [ $HOST_IP_IFACE == "eth2" ]; then
-    DOMU_IP=$MGT_IP
+    OS_VM_SERVICES_ADDRESS=$MGT_IP
     if [ $MGT_IP == "dhcp" ]; then
-        DOMU_IP=$(find_ip_by_name $GUEST_NAME 2)
+        OS_VM_SERVICES_ADDRESS=$(find_ip_by_name $GUEST_NAME 2)
     fi
 else
-    DOMU_IP=$PUB_IP
+    OS_VM_SERVICES_ADDRESS=$PUB_IP
     if [ $PUB_IP == "dhcp" ]; then
-        DOMU_IP=$(find_ip_by_name $GUEST_NAME 3)
+        OS_VM_SERVICES_ADDRESS=$(find_ip_by_name $GUEST_NAME 3)
     fi
 fi
 
@@ -371,11 +299,11 @@ if [ "$WAIT_TILL_LAUNCH" = "1" ]  && [ -e ~/.ssh/id_rsa.pub  ] && [ "$COPYENV" =
 
     echo "VM Launched - Waiting for startup script"
     # wait for log to appear
-    while ! ssh_no_check -q stack@$DOMU_IP "[ -e run.sh.log ]"; do
+    while ! ssh_no_check -q stack@$OS_VM_MANAGEMENT_ADDRESS "[ -e run.sh.log ]"; do
         sleep 10
     done
     echo -n "Running"
-    while [ `ssh_no_check -q stack@$DOMU_IP pgrep -c run.sh` -ge 1 ]
+    while [ `ssh_no_check -q stack@$OS_VM_MANAGEMENT_ADDRESS pgrep -c run.sh` -ge 1 ]
     do
         sleep 10
         echo -n "."
@@ -384,17 +312,17 @@ if [ "$WAIT_TILL_LAUNCH" = "1" ]  && [ -e ~/.ssh/id_rsa.pub  ] && [ "$COPYENV" =
     set -x
 
     # output the run.sh.log
-    ssh_no_check -q stack@$DOMU_IP 'cat run.sh.log'
+    ssh_no_check -q stack@$OS_VM_MANAGEMENT_ADDRESS 'cat run.sh.log'
 
     # Fail if the expected text is not found
-    ssh_no_check -q stack@$DOMU_IP 'cat run.sh.log' | grep -q 'stack.sh completed in'
+    ssh_no_check -q stack@$OS_VM_MANAGEMENT_ADDRESS 'cat run.sh.log' | grep -q 'stack.sh completed in'
 
     set +x
     echo "################################################################################"
     echo ""
     echo "All Finished!"
     echo "You can visit the OpenStack Dashboard"
-    echo "at http://$DOMU_IP, and contact other services at the usual ports."
+    echo "at http://$OS_VM_SERVICES_ADDRESS, and contact other services at the usual ports."
 else
     set +x
     echo "################################################################################"
@@ -403,9 +331,9 @@ else
     echo "Now, you can monitor the progress of the stack.sh installation by "
     echo "tailing /opt/stack/run.sh.log from within your domU."
     echo ""
-    echo "ssh into your domU now: 'ssh stack@$DOMU_IP' using your password"
+    echo "ssh into your domU now: 'ssh stack@$OS_VM_MANAGEMENT_ADDRESS' using your password"
     echo "and then do: 'tail -f /opt/stack/run.sh.log'"
     echo ""
     echo "When the script completes, you can then visit the OpenStack Dashboard"
-    echo "at http://$DOMU_IP, and contact other services at the usual ports."
+    echo "at http://$OS_VM_SERVICES_ADDRESS, and contact other services at the usual ports."
 fi

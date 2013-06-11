@@ -7,9 +7,8 @@
 # Based on a script by: David Markey <david.markey@citrix.com>
 #
 
-# Exit on errors
 set -o errexit
-# Echo commands
+set -o nounset
 set -o xtrace
 
 # This directory
@@ -54,11 +53,11 @@ disk_size=$(($OSDOMU_VDI_GB * 1024 * 1024 * 1024))
 pvargs="-- quiet console=hvc0 partman/default_filesystem=ext3 \
 console-setup/ask_detect=false locale=${UBUNTU_INST_LOCALE} \
 keyboard-configuration/layoutcode=${UBUNTU_INST_KEYBOARD} \
-netcfg/choose_interface=${HOST_IP_IFACE} \
+netcfg/choose_interface=${UBUNTU_INST_IFACE} \
 netcfg/get_hostname=os netcfg/get_domain=os auto \
 url=${preseed_url}"
 
-if [ "$NETINSTALLIP" != "dhcp" ]; then
+if [ "$UBUNTU_INST_IP" != "dhcp" ]; then
     netcfgargs="netcfg/disable_autoconfig=true \
 netcfg/get_nameservers=${UBUNTU_INST_NAMESERVERS} \
 netcfg/get_ipaddress=${UBUNTU_INST_IP} \
@@ -70,11 +69,16 @@ fi
 
 xe template-param-set uuid=$new_uuid \
     other-config:install-methods=http \
-    other-config:install-repository="$UBUNTU_INST_REPOSITORY" \
+    other-config:install-repository="http://${UBUNTU_INST_HTTP_HOSTNAME}${UBUNTU_INST_HTTP_DIRECTORY}" \
     PV-args="$pvargs" \
     other-config:debian-release="$UBUNTU_INST_RELEASE" \
     other-config:default_template=true \
     other-config:disks='<provision><disk device="0" size="'$disk_size'" sr="" bootable="true" type="system"/></provision>' \
     other-config:install-arch="$UBUNTU_INST_ARCH"
+
+if ! [ -z "$UBUNTU_INST_HTTP_PROXY" ]; then
+    xe template-param-set uuid=$new_uuid \
+        other-config:install-proxy="$UBUNTU_INST_HTTP_PROXY"
+fi
 
 echo "Ubuntu template installed uuid:$new_uuid"

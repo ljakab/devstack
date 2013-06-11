@@ -75,7 +75,7 @@ Q_PLUGIN=${Q_PLUGIN:-openvswitch}
 # Default Quantum Port
 Q_PORT=${Q_PORT:-9696}
 # Default Quantum Host
-Q_HOST=${Q_HOST:-$HOST_IP}
+Q_HOST=${Q_HOST:-$SERVICE_HOST}
 # Default admin username
 Q_ADMIN_USERNAME=${Q_ADMIN_USERNAME:-quantum}
 # Default auth strategy
@@ -86,7 +86,7 @@ Q_USE_NAMESPACE=${Q_USE_NAMESPACE:-True}
 Q_OVS_USE_VETH=${Q_OVS_USE_VETH:-False}
 Q_USE_ROOTWRAP=${Q_USE_ROOTWRAP:-True}
 # Meta data IP
-Q_META_DATA_IP=${Q_META_DATA_IP:-$HOST_IP}
+Q_META_DATA_IP=${Q_META_DATA_IP:-$SERVICE_HOST}
 # Allow Overlapping IP among subnets
 Q_ALLOW_OVERLAPPING_IP=${Q_ALLOW_OVERLAPPING_IP:-True}
 # Use quantum-debug command
@@ -386,6 +386,11 @@ function start_quantum_agents() {
     screen_it q-l3 "cd $QUANTUM_DIR && python $AGENT_L3_BINARY --config-file $QUANTUM_CONF --config-file=$Q_L3_CONF_FILE"
     screen_it q-meta "cd $QUANTUM_DIR && python $AGENT_META_BINARY --config-file $QUANTUM_CONF --config-file=$Q_META_CONF_FILE"
 
+    if [ "$VIRT_DRIVER" = 'xenserver' ]; then
+        # For XenServer, start an agent for the domU openvswitch
+        screen_it q-domua "cd $QUANTUM_DIR && python $AGENT_BINARY --config-file $QUANTUM_CONF --config-file /$Q_PLUGIN_CONF_FILE.domU"
+    fi
+
     if is_service_enabled q-lbaas; then
         screen_it q-lbaas "cd $QUANTUM_DIR && python $AGENT_LBAAS_BINARY --config-file $QUANTUM_CONF --config-file=$LBAAS_AGENT_CONF_FILENAME"
     fi
@@ -397,12 +402,23 @@ function stop_quantum() {
         pid=$(ps aux | awk '/[d]nsmasq.+interface=(tap|ns-)/ { print $2 }')
         [ ! -z "$pid" ] && sudo kill -9 $pid
     fi
+    if is_service_enabled q-meta; then
+        pid=$(ps aux | awk '/quantum-ns-metadata-proxy/ { print $2 }')
+        [ ! -z "$pid" ] && sudo kill -9 $pid
+    fi
 }
 
 # cleanup_quantum() - Remove residual data files, anything left over from previous
 # runs that a clean run would need to clean up
 function cleanup_quantum() {
-    :
+    if is_quantum_ovs_base_plugin; then
+        quantum_ovs_base_cleanup
+    fi
+
+    # delete all namespaces created by quantum
+    for ns in $(sudo ip netns list | grep -o -e qdhcp-[0-9a-f\-]* -e qrouter-[0-9a-f\-]*); do
+        sudo ip netns delete ${ns}
+    done
 }
 
 # _configure_quantum_common()
@@ -498,7 +514,6 @@ function _configure_quantum_l3_agent() {
     # for l3-agent, only use per tenant router if we have namespaces
     Q_L3_ROUTER_PER_TENANT=$Q_USE_NAMESPACE
     AGENT_L3_BINARY="$QUANTUM_DIR/bin/quantum-l3-agent"
-    PUBLIC_BRIDGE=${PUBLIC_BRIDGE:-br-ex}
     Q_L3_CONF_FILE=$QUANTUM_CONF_DIR/l3_agent.ini
 
     cp $QUANTUM_DIR/etc/l3_agent.ini $Q_L3_CONF_FILE
@@ -577,10 +592,6 @@ function _configure_quantum_service() {
 
     iniset $QUANTUM_CONF DEFAULT auth_strategy $Q_AUTH_STRATEGY
     _quantum_setup_keystone $QUANTUM_CONF keystone_authtoken
-    # Comment out keystone authtoken configuration in api-paste.ini
-    # It is required to avoid any breakage in Quantum where the sample
-    # api-paste.ini has authtoken configurations.
-    _quantum_commentout_keystone_authtoken $Q_API_PASTE_FILE filter:authtoken
 
     # Configure plugin
     quantum_plugin_configure_service
@@ -649,21 +660,6 @@ function _quantum_setup_keystone() {
     sudo mkdir -p $QUANTUM_AUTH_CACHE_DIR
     sudo chown $STACK_USER $QUANTUM_AUTH_CACHE_DIR
     rm -f $QUANTUM_AUTH_CACHE_DIR/*
-}
-
-function _quantum_commentout_keystone_authtoken() {
-    local conf_file=$1
-    local section=$2
-
-    inicomment $conf_file $section auth_host
-    inicomment $conf_file $section auth_port
-    inicomment $conf_file $section auth_protocol
-    inicomment $conf_file $section auth_url
-
-    inicomment $conf_file $section admin_tenant_name
-    inicomment $conf_file $section admin_user
-    inicomment $conf_file $section admin_password
-    inicomment $conf_file $section signing_dir
 }
 
 function _quantum_setup_interface_driver() {
