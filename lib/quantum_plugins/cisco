@@ -792,6 +792,8 @@ function _create_devstack_vsm() {
     fi
 
     if [[ "$vsm_state" == "  shut off" ]]; then
+        config_vsm=True
+
         # Create the VSM bridge
         sudo brctl addbr ds-vsm-bridge
         sudo ip link set ds-vsm-bridge up

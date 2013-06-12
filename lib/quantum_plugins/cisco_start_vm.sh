@@ -22,6 +22,8 @@ $nova boot --image IMAGE_ID --flavor 1 --nic net-id=NETWORK_ID --meta port_id=PO
    6. VNC into your guest instance. Configure ip-address (from step 4) for this instance.
 EOF
 
+set -x
+
 NETWORK_PROFILE_NAME=${NETWORK_PROFILE_NAME:-np_test}
 VLAN_RANGE=${VLAN_RANGE:-400-499}
 NETWORK_NAME=${NETWORK_NAME:-test_net}
