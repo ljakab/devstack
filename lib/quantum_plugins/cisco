@@ -622,7 +622,7 @@ function _create_devstack_vsm() {
         die $LINENO "Can't find the VSM iso image file $Q_CISCO_PLUGIN_VSM_ISO_IMAGE!"
     fi
 
-    vsm_iso_image=$DATA_DIR/quantum/cisco/$(basename Q_CISCO_PLUGIN_VSM_ISO_IMAGE)
+    vsm_iso_image=$DATA_DIR/quantum/cisco/$(basename $Q_CISCO_PLUGIN_VSM_ISO_IMAGE)
 
     if [[ ! -d $DATA_DIR/quantum/cisco ]]; then
         mkdir -p $DATA_DIR/quantum/cisco
@@ -641,7 +641,7 @@ function _create_devstack_vsm() {
 
     # Check if the vsm image is changed
     if [[ -f $vsm_xml_file ]]; then
-        matched=$(grep -c -m 1 "<source file='$vsm_image_file'/>" $vsm_xml_file)
+        matched=$(grep -c -m 1 "<source file='$vsm_iso_image'/>" $vsm_xml_file)
         # The image file is changed; the VM needs to be recreated
         if [[ "$matched" == "0" ]]; then
             recreate=yes
