@@ -958,30 +958,6 @@ function n1k_iniset() {
     fi
 }
 
-# Configure n1kv plugin
-function _configure_n1kv_subplugin() {
-    local cisco_cfg_file=$1
-
-    # if Embedded VSM is deployed, launch the VSM
-    if [[ "$Q_CISCO_PLUGIN_DEVSTACK_VSM" == "True" ]]; then
-        _create_devstack_vsm
-    fi
-
-    # populate the cisco plugin cfg file with the VSM information
-    echo "Configuring n1kv in $cisco_cfg_file-- $Q_CISCO_PLUGIN_VSM_IP $Q_CISCO_PLUGIN_VSM_USERNAME $Q_CISCO_PLUGIN_VSM_PASSWORD"
-    iniset $cisco_cfg_file N1KV:$Q_CISCO_PLUGIN_VSM_IP username $Q_CISCO_PLUGIN_VSM_USERNAME
-    iniset $cisco_cfg_file N1KV:$Q_CISCO_PLUGIN_VSM_IP password $Q_CISCO_PLUGIN_VSM_PASSWORD
-
-    iniset $cisco_cfg_file CISCO_N1K integration_bridge $Q_CISCO_PLUGIN_INTEGRATION_BRIDGE
-    iniset $cisco_cfg_file CISCO_N1K enable_tunneling $Q_CISCO_PLUGIN_ENABLE_TUNNELING
-    iniset $cisco_cfg_file CISCO_N1K vxlan_id_ranges $Q_CISCO_PLUGIN_VXLAN_ID_RANGES
-    iniset $cisco_cfg_file CISCO_N1K network_vlan_ranges $Q_CISCO_PLUGIN_VLAN_RANGES
-
-    # Before n1kv plugin code is pushed upstream, the following is required so
-    # that profile commands from cisco plugin is available
-    sudo cp -r $QUANTUMCLIENT_DIR/quantumclient /usr/local/lib/python2.7/dist-packages/
-}
-
 # Configure/Install the uVEM
 function _configure_uvem() {
     # Specify uVEM configuration information
@@ -1071,17 +1047,42 @@ function _configure_uvem() {
     fi
 }
 
+# Configure n1kv plugin
+function _configure_n1kv_subplugin() {
+    local cisco_cfg_file=$1
+
+    # if Embedded VSM is deployed, launch the VSM
+    if [[ "$Q_CISCO_PLUGIN_DEVSTACK_VSM" == "True" ]]; then
+        _create_devstack_vsm
+    fi
+
+    # populate the cisco plugin cfg file with the VSM information
+    echo "Configuring n1kv in $cisco_cfg_file-- $Q_CISCO_PLUGIN_VSM_IP $Q_CISCO_PLUGIN_VSM_USERNAME $Q_CISCO_PLUGIN_VSM_PASSWORD"
+    iniset $cisco_cfg_file N1KV:$Q_CISCO_PLUGIN_VSM_IP username $Q_CISCO_PLUGIN_VSM_USERNAME
+    iniset $cisco_cfg_file N1KV:$Q_CISCO_PLUGIN_VSM_IP password $Q_CISCO_PLUGIN_VSM_PASSWORD
+
+    iniset $cisco_cfg_file CISCO_N1K integration_bridge $Q_CISCO_PLUGIN_INTEGRATION_BRIDGE
+    iniset $cisco_cfg_file CISCO_N1K enable_tunneling $Q_CISCO_PLUGIN_ENABLE_TUNNELING
+    iniset $cisco_cfg_file CISCO_N1K vxlan_id_ranges $Q_CISCO_PLUGIN_VXLAN_ID_RANGES
+    iniset $cisco_cfg_file CISCO_N1K network_vlan_ranges $Q_CISCO_PLUGIN_VLAN_RANGES
+
+    # Before n1kv plugin code is pushed upstream, the following is required so
+    # that profile commands from cisco plugin is available
+    sudo cp -r $QUANTUMCLIENT_DIR/quantumclient /usr/local/lib/python2.7/dist-packages/
+
+    # Setup the integration bridge by calling ovs_base
+    OVS_BRIDGE=$Q_CISCO_PLUGIN_INTEGRATION_BRIDGE
+    _quantum_ovs_base_setup_bridge $OVS_BRIDGE
+    
+    # Configure uVEM on compute nodes
+    if is_service_enabled n-cpu; then
+        _configure_uvem
+    fi
+}
+
 function quantum_plugin_configure_plugin_agent() {
     if _has_ovs_subplugin; then
         ovs_quantum_plugin_configure_plugin_agent
-    else
-        if _has_n1kv_subplugin; then
-            OVS_BRIDGE=$Q_CISCO_PLUGIN_INTEGRATION_BRIDGE
-            _quantum_ovs_base_setup_bridge $OVS_BRIDGE
-            # Assuming q-agt will be enabled on all the compute nodes
-            # uVEM is only configured/installed with q-agt enabled
-            _configure_uvem
-        fi
     fi
 }
 
