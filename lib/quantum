@@ -52,6 +52,10 @@
 # Quantum.
 #
 # With Quantum networking the NETWORK_MANAGER variable is ignored.
+#
+# To enable specific configuration options for either the Open vSwitch or
+# LinuxBridge plugin, please see the top level README file under the
+# Quantum section.
 
 # Save trace setting
 XTRACE=$(set +o | grep xtrace)
@@ -60,6 +64,12 @@ set +o xtrace
 
 # Quantum Network Configuration
 # -----------------------------
+
+# Gateway and subnet defaults, in case they are not customized in localrc
+NETWORK_GATEWAY=${NETWORK_GATEWAY:-10.0.0.1}
+PUBLIC_NETWORK_GATEWAY=${PUBLIC_NETWORK_GATEWAY:-172.24.4.225}
+PRIVATE_SUBNET_NAME=${PRIVATE_SUBNET_NAME:-"private-subnet"}
+PUBLIC_SUBNET_NAME=${PUBLIC_SUBNET_NAME:-"public-subnet"}
 
 # Set up default directories
 QUANTUM_DIR=$DEST/quantum
@@ -112,18 +122,18 @@ if is_service_enabled quantum; then
     # The following variables control the Quantum openvswitch and
     # linuxbridge plugins' allocation of tenant networks and
     # availability of provider networks. If these are not configured
-    # in localrc, tenant networks will be local to the host (with no
+    # in ``localrc``, tenant networks will be local to the host (with no
     # remote connectivity), and no physical resources will be
     # available for the allocation of provider networks.
 
     # To use GRE tunnels for tenant networks, set to True in
-    # localrc. GRE tunnels are only supported by the openvswitch
+    # ``localrc``. GRE tunnels are only supported by the openvswitch
     # plugin, and currently only on Ubuntu.
     ENABLE_TENANT_TUNNELS=${ENABLE_TENANT_TUNNELS:-False}
 
     # If using GRE tunnels for tenant networks, specify the range of
     # tunnel IDs from which tenant networks are allocated. Can be
-    # overriden in localrc in necesssary.
+    # overriden in ``localrc`` in necesssary.
     TENANT_TUNNEL_RANGES=${TENANT_TUNNEL_RANGE:-1:1000}
 
     # To use VLANs for tenant networks, set to True in localrc. VLANs
@@ -131,7 +141,7 @@ if is_service_enabled quantum; then
     # requiring additional configuration described below.
     ENABLE_TENANT_VLANS=${ENABLE_TENANT_VLANS:-False}
 
-    # If using VLANs for tenant networks, set in localrc to specify
+    # If using VLANs for tenant networks, set in ``localrc`` to specify
     # the range of VLAN VIDs from which tenant networks are
     # allocated. An external network switch must be configured to
     # trunk these VLANs between hosts for multi-host connectivity.
@@ -140,16 +150,16 @@ if is_service_enabled quantum; then
     TENANT_VLAN_RANGE=${TENANT_VLAN_RANGE:-}
 
     # If using VLANs for tenant networks, or if using flat or VLAN
-    # provider networks, set in localrc to the name of the physical
-    # network, and also configure OVS_PHYSICAL_BRIDGE for the
-    # openvswitch agent or LB_PHYSICAL_INTERFACE for the linuxbridge
+    # provider networks, set in ``localrc`` to the name of the physical
+    # network, and also configure ``OVS_PHYSICAL_BRIDGE`` for the
+    # openvswitch agent or ``LB_PHYSICAL_INTERFACE`` for the linuxbridge
     # agent, as described below.
     #
     # Example: ``PHYSICAL_NETWORK=default``
     PHYSICAL_NETWORK=${PHYSICAL_NETWORK:-}
 
     # With the openvswitch plugin, if using VLANs for tenant networks,
-    # or if using flat or VLAN provider networks, set in localrc to
+    # or if using flat or VLAN provider networks, set in ``localrc`` to
     # the name of the OVS bridge to use for the physical network. The
     # bridge will be created if it does not already exist, but a
     # physical interface must be manually added to the bridge as a
@@ -159,30 +169,31 @@ if is_service_enabled quantum; then
     OVS_PHYSICAL_BRIDGE=${OVS_PHYSICAL_BRIDGE:-}
 
     # With the linuxbridge plugin, if using VLANs for tenant networks,
-    # or if using flat or VLAN provider networks, set in localrc to
+    # or if using flat or VLAN provider networks, set in ``localrc`` to
     # the name of the network interface to use for the physical
     # network.
     #
     # Example: ``LB_PHYSICAL_INTERFACE=eth1``
     LB_PHYSICAL_INTERFACE=${LB_PHYSICAL_INTERFACE:-}
 
-    # With the openvswitch plugin, set to True in localrc to enable
+    # With the openvswitch plugin, set to True in ``localrc`` to enable
     # provider GRE tunnels when ``ENABLE_TENANT_TUNNELS`` is False.
     #
     # Example: ``OVS_ENABLE_TUNNELING=True``
     OVS_ENABLE_TUNNELING=${OVS_ENABLE_TUNNELING:-$ENABLE_TENANT_TUNNELS}
 fi
 
-
 # Quantum plugin specific functions
 # ---------------------------------
-# Please refer to lib/quantum_plugins/README.md for details.
+
+# Please refer to ``lib/quantum_plugins/README.md`` for details.
 source $TOP_DIR/lib/quantum_plugins/$Q_PLUGIN
 
 # Agent loadbalancer service plugin functions
 # -------------------------------------------
+
 # Hardcoding for 1 service plugin for now
-source $TOP_DIR/lib/quantum_plugins/services/agent_loadbalancer
+source $TOP_DIR/lib/quantum_plugins/services/loadbalancer
 
 # Use security group or not
 if has_quantum_plugin_security_group; then
@@ -190,7 +201,6 @@ if has_quantum_plugin_security_group; then
 else
     Q_USE_SECGROUP=False
 fi
-
 
 # Functions
 # ---------
@@ -300,11 +310,11 @@ function create_quantum_initial_network() {
             sudo ip addr add $IP dev $OVS_PHYSICAL_BRIDGE
         done
         NET_ID=$(quantum net-create $PHYSICAL_NETWORK --tenant_id $TENANT_ID --provider:network_type flat --provider:physical_network "$PHYSICAL_NETWORK" | grep ' id ' | get_field 2)
-        SUBNET_ID=$(quantum subnet-create --tenant_id $TENANT_ID --ip_version 4 ${ALLOCATION_POOL:+--allocation-pool $ALLOCATION_POOL} --gateway $NETWORK_GATEWAY $NET_ID $FIXED_RANGE | grep ' id ' | get_field 2)
+        SUBNET_ID=$(quantum subnet-create --tenant_id $TENANT_ID --ip_version 4 ${ALLOCATION_POOL:+--allocation-pool $ALLOCATION_POOL} --gateway $NETWORK_GATEWAY --name $PRIVATE_SUBNET_NAME $NET_ID $FIXED_RANGE | grep ' id ' | get_field 2)
         sudo ifconfig $OVS_PHYSICAL_BRIDGE up
     else
         NET_ID=$(quantum net-create --tenant_id $TENANT_ID "$PRIVATE_NETWORK_NAME" | grep ' id ' | get_field 2)
-        SUBNET_ID=$(quantum subnet-create --tenant_id $TENANT_ID --ip_version 4 --gateway $NETWORK_GATEWAY $NET_ID $FIXED_RANGE | grep ' id ' | get_field 2)
+        SUBNET_ID=$(quantum subnet-create --tenant_id $TENANT_ID --ip_version 4 --gateway $NETWORK_GATEWAY --name $PRIVATE_SUBNET_NAME $NET_ID $FIXED_RANGE | grep ' id ' | get_field 2)
     fi
 
     if [[ "$Q_L3_ENABLED" == "True" ]]; then
@@ -319,7 +329,7 @@ function create_quantum_initial_network() {
         quantum router-interface-add $ROUTER_ID $SUBNET_ID
         # Create an external network, and a subnet. Configure the external network as router gw
         EXT_NET_ID=$(quantum net-create "$PUBLIC_NETWORK_NAME" -- --router:external=True | grep ' id ' | get_field 2)
-        EXT_GW_IP=$(quantum subnet-create --ip_version 4 ${Q_FLOATING_ALLOCATION_POOL:+--allocation-pool $Q_FLOATING_ALLOCATION_POOL} $EXT_NET_ID $FLOATING_RANGE -- --enable_dhcp=False | grep 'gateway_ip' | get_field 2)
+        EXT_GW_IP=$(quantum subnet-create --ip_version 4 ${Q_FLOATING_ALLOCATION_POOL:+--allocation-pool $Q_FLOATING_ALLOCATION_POOL} --gateway $PUBLIC_NETWORK_GATEWAY --name $PUBLIC_SUBNET_NAME $EXT_NET_ID $FLOATING_RANGE -- --enable_dhcp=False | grep 'gateway_ip' | get_field 2)
         quantum router-gateway-set $ROUTER_ID $EXT_NET_ID
 
         if is_service_enabled q-l3; then
@@ -358,8 +368,14 @@ function install_quantumclient() {
 
 # install_quantum_agent_packages() - Collect source and prepare
 function install_quantum_agent_packages() {
-    # install packages that is specific to plugin agent
-    quantum_plugin_install_agent_packages
+    # install packages that are specific to plugin agent(s)
+    if is_service_enabled q-agt q-dhcp q-l3; then
+        quantum_plugin_install_agent_packages
+    fi
+
+    if is_service_enabled q-lbaas; then
+       quantum_agent_lbaas_install_agent_packages
+    fi
 }
 
 # Start running processes, including screen
@@ -423,7 +439,7 @@ function cleanup_quantum() {
 
 # _configure_quantum_common()
 # Set common config for all quantum server and agents.
-# This MUST be called before other _configure_quantum_* functions.
+# This MUST be called before other ``_configure_quantum_*`` functions.
 function _configure_quantum_common() {
     # Put config files in ``QUANTUM_CONF_DIR`` for everyone to find
     if [[ ! -d $QUANTUM_CONF_DIR ]]; then
@@ -433,11 +449,11 @@ function _configure_quantum_common() {
 
     cp $QUANTUM_DIR/etc/quantum.conf $QUANTUM_CONF
 
-    # Set plugin-specific variables Q_DB_NAME, Q_PLUGIN_CLASS.
-    # For main plugin config file, set Q_PLUGIN_CONF_PATH, Q_PLUGIN_CONF_FILENAME.
-    # For addition plugin config files, set Q_PLUGIN_EXTRA_CONF_PATH,
-    # Q_PLUGIN_EXTRA_CONF_FILES.  For example:
-    #    Q_PLUGIN_EXTRA_CONF_FILES=(file1, file2)
+    # Set plugin-specific variables ``Q_DB_NAME``, ``Q_PLUGIN_CLASS``.
+    # For main plugin config file, set ``Q_PLUGIN_CONF_PATH``, ``Q_PLUGIN_CONF_FILENAME``.
+    # For addition plugin config files, set ``Q_PLUGIN_EXTRA_CONF_PATH``,
+    # ``Q_PLUGIN_EXTRA_CONF_FILES``.  For example:
+    #    ``Q_PLUGIN_EXTRA_CONF_FILES=(file1, file2)``
     quantum_plugin_configure_common
 
     if [[ $Q_PLUGIN_CONF_PATH == '' || $Q_PLUGIN_CONF_FILENAME == '' || $Q_PLUGIN_CLASS == '' ]]; then
@@ -449,7 +465,7 @@ function _configure_quantum_common() {
     Q_PLUGIN_CONF_FILE=$Q_PLUGIN_CONF_PATH/$Q_PLUGIN_CONF_FILENAME
     cp $QUANTUM_DIR/$Q_PLUGIN_CONF_FILE /$Q_PLUGIN_CONF_FILE
 
-    iniset /$Q_PLUGIN_CONF_FILE DATABASE sql_connection `database_connection_url $Q_DB_NAME`
+    iniset /$Q_PLUGIN_CONF_FILE database connection `database_connection_url $Q_DB_NAME`
     iniset $QUANTUM_CONF DEFAULT state_path $DATA_DIR/quantum
 
     # If addition config files are set, make sure their path name is set as well
@@ -484,7 +500,7 @@ function _configure_quantum_debug_command() {
     iniset $QUANTUM_TEST_CONFIG_FILE DEFAULT root_helper "$Q_RR_COMMAND"
     # Intermediate fix until Quantum patch lands and then line above will
     # be cleaned.
-    iniset $QUANTUM_TEST_CONFIG_FILE AGENT root_helper "$Q_RR_COMMAND"
+    iniset $QUANTUM_TEST_CONFIG_FILE agent root_helper "$Q_RR_COMMAND"
 
     _quantum_setup_keystone $QUANTUM_TEST_CONFIG_FILE DEFAULT set_auth_url
     _quantum_setup_interface_driver $QUANTUM_TEST_CONFIG_FILE
@@ -543,9 +559,7 @@ function _configure_quantum_metadata_agent() {
     _quantum_setup_keystone $Q_META_CONF_FILE DEFAULT set_auth_url
 }
 
-function _configure_quantum_lbaas()
-{
-    quantum_agent_lbaas_install_agent_packages
+function _configure_quantum_lbaas() {
     quantum_agent_lbaas_configure_common
     quantum_agent_lbaas_configure_agent
 }
@@ -555,7 +569,7 @@ function _configure_quantum_lbaas()
 function _configure_quantum_plugin_agent() {
     # Specify the default root helper prior to agent configuration to
     # ensure that an agent's configuration can override the default
-    iniset /$Q_PLUGIN_CONF_FILE AGENT root_helper "$Q_RR_COMMAND"
+    iniset /$Q_PLUGIN_CONF_FILE agent root_helper "$Q_RR_COMMAND"
     iniset $QUANTUM_CONF DEFAULT verbose True
     iniset $QUANTUM_CONF DEFAULT debug True
 
@@ -606,17 +620,17 @@ function _quantum_setup_rootwrap() {
         return
     fi
     # Deploy new rootwrap filters files (owned by root).
-    # Wipe any existing rootwrap.d files first
+    # Wipe any existing ``rootwrap.d`` files first
     Q_CONF_ROOTWRAP_D=$QUANTUM_CONF_DIR/rootwrap.d
     if [[ -d $Q_CONF_ROOTWRAP_D ]]; then
         sudo rm -rf $Q_CONF_ROOTWRAP_D
     fi
-    # Deploy filters to $QUANTUM_CONF_DIR/rootwrap.d
+    # Deploy filters to ``$QUANTUM_CONF_DIR/rootwrap.d``
     mkdir -p -m 755 $Q_CONF_ROOTWRAP_D
     cp -pr $QUANTUM_DIR/etc/quantum/rootwrap.d/* $Q_CONF_ROOTWRAP_D/
     sudo chown -R root:root $Q_CONF_ROOTWRAP_D
     sudo chmod 644 $Q_CONF_ROOTWRAP_D/*
-    # Set up rootwrap.conf, pointing to $QUANTUM_CONF_DIR/rootwrap.d
+    # Set up ``rootwrap.conf``, pointing to ``$QUANTUM_CONF_DIR/rootwrap.d``
     # location moved in newer versions, prefer new location
     if test -r $QUANTUM_DIR/etc/quantum/rootwrap.conf; then
       sudo cp -p $QUANTUM_DIR/etc/quantum/rootwrap.conf $Q_RR_CONF_FILE
@@ -626,7 +640,7 @@ function _quantum_setup_rootwrap() {
     sudo sed -e "s:^filters_path=.*$:filters_path=$Q_CONF_ROOTWRAP_D:" -i $Q_RR_CONF_FILE
     sudo chown root:root $Q_RR_CONF_FILE
     sudo chmod 0644 $Q_RR_CONF_FILE
-    # Specify rootwrap.conf as first parameter to quantum-rootwrap
+    # Specify ``rootwrap.conf`` as first parameter to quantum-rootwrap
     ROOTWRAP_SUDOER_CMD="$QUANTUM_ROOTWRAP $Q_RR_CONF_FILE *"
 
     # Set up the rootwrap sudoers for quantum
@@ -637,7 +651,7 @@ function _quantum_setup_rootwrap() {
     sudo mv $TEMPFILE /etc/sudoers.d/quantum-rootwrap
 
     # Update the root_helper
-    iniset $QUANTUM_CONF AGENT root_helper "$Q_RR_COMMAND"
+    iniset $QUANTUM_CONF agent root_helper "$Q_RR_COMMAND"
 }
 
 # Configures keystone integration for quantum service and agents
@@ -743,7 +757,8 @@ function _ssh_check_quantum() {
 
 # Quantum 3rd party programs
 #---------------------------
-# please refer to lib/quantum_thirdparty/README.md for details
+
+# please refer to ``lib/quantum_thirdparty/README.md`` for details
 QUANTUM_THIRD_PARTIES=""
 for f in $TOP_DIR/lib/quantum_thirdparty/*; do
      third_party=$(basename $f)
