@@ -4,9 +4,9 @@ objectClass: dcObject
 objectClass: organizationalUnit
 ou: openstack
 
-dn: ou=Groups,dc=openstack,dc=org
+dn: ou=UserGroups,dc=openstack,dc=org
 objectClass: organizationalUnit
-ou: Groups
+ou: UserGroups
 
 dn: ou=Users,dc=openstack,dc=org
 objectClass: organizationalUnit
@@ -19,10 +19,6 @@ ou: Roles
 dn: ou=Projects,dc=openstack,dc=org
 objectClass: organizationalUnit
 ou: Projects
-
-dn: ou=Domains,dc=openstack,dc=org
-objectClass: organizationalUnit
-ou: Domains
 
 dn: cn=9fe2ff9ee4384b1894a90878d3e92bab,ou=Roles,dc=openstack,dc=org
 objectClass: organizationalRole

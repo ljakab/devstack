@@ -2,8 +2,8 @@
 
 # ``stack.sh`` is an opinionated OpenStack developer installation.  It
 # installs and configures various combinations of **Ceilometer**, **Cinder**,
-# **Glance**, **Heat**, **Horizon**, **Keystone**, **Nova**, **Quantum**
-# and **Swift**
+# **Glance**, **Heat**, **Horizon**, **Keystone**, **Nova**, **Neutron**
+# and **Swift**.
 
 # This script allows you to specify configuration options of what git
 # repositories to use, enabled services, network configuration and various
@@ -12,9 +12,11 @@
 # developer install.
 
 # To keep this script simple we assume you are running on a recent **Ubuntu**
-# (12.04 Precise or newer) or **Fedora** (F16 or newer) machine.  It
-# should work in a VM or physical server.  Additionally we put the list of
-# ``apt`` and ``rpm`` dependencies and other configuration files in this repo.
+# (12.04 Precise or newer) or **Fedora** (F16 or newer) machine.  (It may work
+# on other platforms but support for those platforms is left to those who added
+# them to DevStack.)  It should work in a VM or physical server.  Additionally
+# we maintain a list of ``apt`` and ``rpm`` dependencies and other configuration
+# files in this repo.
 
 # Learn more and get the most recent version at http://devstack.org
 
@@ -32,28 +34,21 @@ source $TOP_DIR/functions
 # and ``DISTRO``
 GetDistro
 
-# Some dependencies are not available in Debian Wheezy official
-# repositories. However, it's possible to run OpenStack from gplhost
-# repository.
-if [[ "$os_VENDOR" =~ (Debian) ]]; then
-    echo 'deb http://archive.gplhost.com/debian grizzly main' | sudo tee /etc/apt/sources.list.d/gplhost_wheezy-backports.list
-    echo 'deb http://archive.gplhost.com/debian grizzly-backports main' | sudo tee -a /etc/apt/sources.list.d/gplhost_wheezy-backports.list
-    apt_get update
-    apt_get install --force-yes gplhost-archive-keyring
-fi
 
 # Global Settings
 # ===============
 
-# ``stack.sh`` is customizable through setting environment variables.  If you
-# want to override a setting you can set and export it::
+# ``stack.sh`` is customizable by setting environment variables.  Override a
+# default setting via export::
 #
 #     export DATABASE_PASSWORD=anothersecret
 #     ./stack.sh
 #
-# You can also pass options on a single line ``DATABASE_PASSWORD=simple ./stack.sh``
+# or by setting the variable on the command line::
 #
-# Additionally, you can put any local variables into a ``localrc`` file::
+#     DATABASE_PASSWORD=simple ./stack.sh
+#
+# Persistent variables can be placed in a ``localrc`` file::
 #
 #     DATABASE_PASSWORD=anothersecret
 #     DATABASE_USER=hellaroot
@@ -114,7 +109,7 @@ disable_negated_services
 
 # Warn users who aren't on an explicitly supported distro, but allow them to
 # override check and attempt installation with ``FORCE=yes ./stack``
-if [[ ! ${DISTRO} =~ (oneiric|precise|quantal|raring|saucy|7.0|wheezy|sid|testing|jessie|f16|f17|f18|opensuse-12.2|rhel6) ]]; then
+if [[ ! ${DISTRO} =~ (oneiric|precise|quantal|raring|saucy|7.0|wheezy|sid|testing|jessie|f16|f17|f18|f19|opensuse-12.2|rhel6) ]]; then
     echo "WARNING: this script has not been tested on $DISTRO"
     if [[ "$FORCE" != "yes" ]]; then
         die $LINENO "If you wish to run this script anyway run with FORCE=yes"
@@ -125,7 +120,6 @@ fi
 # and the specified rpc backend is available on your platform.
 check_rpc_backend
 
-SCREEN_NAME=${SCREEN_NAME:-stack}
 # Check to see if we are already running DevStack
 # Note that this may fail if USE_SCREEN=False
 if type -p screen >/dev/null && screen -ls | egrep -q "[0-9].$SCREEN_NAME"; then
@@ -137,6 +131,41 @@ fi
 
 # Set up logging level
 VERBOSE=$(trueorfalse True $VERBOSE)
+
+
+# Additional repos
+# ================
+
+# Some distros need to add repos beyond the defaults provided by the vendor
+# to pick up required packages.
+
+# The Debian Wheezy official repositories do not contain all required packages,
+# add gplhost repository.
+if [[ "$os_VENDOR" =~ (Debian) ]]; then
+    echo 'deb http://archive.gplhost.com/debian grizzly main' | sudo tee /etc/apt/sources.list.d/gplhost_wheezy-backports.list
+    echo 'deb http://archive.gplhost.com/debian grizzly-backports main' | sudo tee -a /etc/apt/sources.list.d/gplhost_wheezy-backports.list
+    apt_get update
+    apt_get install --force-yes gplhost-archive-keyring
+fi
+
+if [[ is_fedora && $DISTRO =~ (rhel6) ]]; then
+    # Installing Open vSwitch on RHEL6 requires enabling the RDO repo.
+    RHEL6_RDO_REPO_RPM=${RHEL6_RDO_REPO_RPM:-"http://rdo.fedorapeople.org/openstack/openstack-grizzly/rdo-release-grizzly-3.noarch.rpm"}
+    RHEL6_RDO_REPO_ID=${RHEL6_RDO_REPO_ID:-"openstack-grizzly"}
+    if ! yum repolist enabled $RHEL6_RDO_REPO_ID | grep -q $RHEL6_RDO_REPO_ID; then
+        echo "RDO repo not detected; installing"
+        yum_install $RHEL6_RDO_REPO_RPM || \
+            die $LINENO "Error installing RDO repo, cannot continue"
+    fi
+
+    # RHEL6 requires EPEL for many Open Stack dependencies
+    RHEL6_EPEL_RPM=${RHEL6_EPEL_RPM:-"http://dl.fedoraproject.org/pub/epel/6/x86_64/epel-release-6-8.noarch.rpm"}
+    if ! yum repolist enabled epel | grep -q 'epel'; then
+        echo "EPEL not detected; installing"
+        yum_install ${RHEL6_EPEL_RPM} || \
+            die $LINENO "Error installing EPEL repo, cannot continue"
+    fi
+fi
 
 
 # root Access
@@ -208,6 +237,9 @@ fi
 sudo mkdir -p $DEST
 sudo chown -R $STACK_USER $DEST
 
+# a basic test for $DEST path permissions (fatal on error unless skipped)
+check_path_perm_sanity ${DEST}
+
 # Set ``OFFLINE`` to ``True`` to configure ``stack.sh`` to run cleanly without
 # Internet access. ``stack.sh`` must have been previously run with Internet
 # access to install prerequisites and fetch repositories.
@@ -234,7 +266,6 @@ sudo chown -R $STACK_USER $DATA_DIR
 FLOATING_RANGE=${FLOATING_RANGE:-172.24.4.224/28}
 FIXED_RANGE=${FIXED_RANGE:-10.0.0.0/24}
 FIXED_NETWORK_SIZE=${FIXED_NETWORK_SIZE:-256}
-NETWORK_GATEWAY=${NETWORK_GATEWAY:-10.0.0.1}
 
 HOST_IP=$(get_default_host_ip $FIXED_RANGE $FLOATING_RANGE "$HOST_IP_IFACE" "$HOST_IP")
 if [ "$HOST_IP" == "" ]; then
@@ -266,7 +297,7 @@ SERVICE_TIMEOUT=${SERVICE_TIMEOUT:-60}
 # Configure Projects
 # ==================
 
-# Get project function libraries
+# Source project function libraries
 source $TOP_DIR/lib/tls
 source $TOP_DIR/lib/horizon
 source $TOP_DIR/lib/keystone
@@ -276,11 +307,11 @@ source $TOP_DIR/lib/cinder
 source $TOP_DIR/lib/swift
 source $TOP_DIR/lib/ceilometer
 source $TOP_DIR/lib/heat
-source $TOP_DIR/lib/quantum
+source $TOP_DIR/lib/neutron
 source $TOP_DIR/lib/baremetal
 source $TOP_DIR/lib/ldap
 
-# Set the destination directories for OpenStack projects
+# Set the destination directories for other OpenStack projects
 OPENSTACKCLIENT_DIR=$DEST/python-openstackclient
 PBR_DIR=$DEST/pbr
 
@@ -535,6 +566,7 @@ failed() {
 # an error.  It is also useful for following along as the install occurs.
 set -o xtrace
 
+
 # Install Packages
 # ================
 
@@ -551,55 +583,60 @@ if is_service_enabled $DATABASE_BACKENDS; then
     install_database
 fi
 
-if is_service_enabled q-agt; then
-    install_quantum_agent_packages
+if is_service_enabled neutron; then
+    install_neutron_agent_packages
 fi
 
-#
+
 # System-specific preconfigure
 # ============================
 
 if [[ is_fedora && $DISTRO =~ (rhel6) ]]; then
-    # An old version (2.0.1) of python-crypto is probably installed on
-    # a fresh system, via the dependency chain
-    # cas->python-paramiko->python-crypto (related to anaconda).
-    # Unfortunately, "pip uninstall pycrypto" will remove the
-    # .egg-info file for this rpm-installed version, but leave most of
-    # the actual library files behind in /usr/lib64/python2.6/Crypto.
-    # When later "pip install pycrypto" happens, the built library
-    # will be installed over these existing files; the result is a
-    # useless mess of old, rpm-packaged files and pip-installed files.
-    # Unsurprisingly, the end result is it doesn't work.  Thus we have
-    # to get rid of it now so that any packages that pip-install
-    # pycrypto get a "clean slate".
-    # (note, we have to be careful about other RPM packages specified
-    # pulling in python-crypto as well.  That's why RHEL6 doesn't
-    # install python-paramiko packages for example...)
+    # Disable selinux to avoid configuring to allow Apache access
+    # to Horizon files or run nodejs (LP#1175444)
+    if selinuxenabled; then
+        sudo setenforce 0
+    fi
+
+    # An old version of ``python-crypto`` (2.0.1) may be installed on a
+    # fresh system via Anaconda and the dependency chain
+    # ``cas`` -> ``python-paramiko`` -> ``python-crypto``.
+    # ``pip uninstall pycrypto`` will remove the packaged ``.egg-info`` file
+    # but leave most of the actual library files behind in ``/usr/lib64/python2.6/Crypto``.
+    # Later ``pip install pycrypto`` will install over the packaged files resulting
+    # in a useless mess of old, rpm-packaged files and pip-installed files.
+    # Remove the package so that ``pip install python-crypto`` installs cleanly.
+    # Note: other RPM packages may require ``python-crypto`` as well.  For example,
+    # RHEL6 does not install ``python-paramiko packages``.
     uninstall_package python-crypto
 
-    # A similar thing happens for python-lxml (a dependency of
-    # ipa-client, an auditing thing we don't care about).  We have the
-    # build-dependencies the lxml pip-install will need (gcc,
-    # libxml2-dev & libxslt-dev) in the "general" rpm lists
+    # A similar situation occurs with ``python-lxml``, which is required by
+    # ``ipa-client``, an auditing package we don't care about.  The
+    # build-dependencies needed for ``pip install lxml`` (``gcc``,
+    # ``libxml2-dev`` and ``libxslt-dev``) are present in ``files/rpms/general``.
     uninstall_package python-lxml
 
-    # If the dbus rpm was installed by the devstack rpm dependencies
-    # then you may hit a bug where the uuid isn't generated because
-    # the service was never started (PR#598200), causing issues for
-    # Nova stopping later on complaining that
-    # '/var/lib/dbus/machine-id' doesn't exist.
+    # If the ``dbus`` package was installed by DevStack dependencies the
+    # uuid may not be generated because the service was never started (PR#598200),
+    # causing Nova to stop later on complaining that ``/var/lib/dbus/machine-id``
+    # does not exist.
     sudo service messagebus restart
 
-    # In setup.py, a "setup_requires" package is supposed to
-    # transient.  However there is a bug with rhel6 distribute where
-    # setup_requires packages can register entry points that aren't
-    # cleared out properly after the setup-phase; the end result is
-    # installation failures (bz#924038).  Thus we pre-install the
-    # problem package here; this way the setup_requires dependency is
-    # already satisfied and it will not need to be installed
-    # transiently, meaning we avoid the issue of it not being cleaned
-    # out properly.  Note we do this before the track-depends below.
+    # ``setup.py`` contains a ``setup_requires`` package that is supposed
+    # to be transient.  However, RHEL6 distribute has a bug where
+    # ``setup_requires`` registers entry points that are not cleaned
+    # out properly after the setup-phase resulting in installation failures
+    # (bz#924038).  Pre-install the problem package so the ``setup_requires``
+    # dependency is satisfied and it will not be installed transiently.
+    # Note we do this before the track-depends below.
     pip_install hgtools
+
+    # RHEL6's version of ``python-nose`` is incompatible with Tempest.
+    # Install nose 1.1 (Tempest-compatible) from EPEL
+    install_package python-nose1.1
+    # Add a symlink for the new nosetests to allow tox for Tempest to
+    # work unmolested.
+    sudo ln -sf /usr/bin/nosetests1.1 /usr/local/bin/nosetests
 fi
 
 TRACK_DEPENDS=${TRACK_DEPENDS:-False}
@@ -632,8 +669,8 @@ install_novaclient
 if is_service_enabled swift glance; then
     install_swiftclient
 fi
-if is_service_enabled quantum nova; then
-    install_quantumclient
+if is_service_enabled neutron nova; then
+    install_neutronclient
 fi
 
 git_clone $OPENSTACKCLIENT_REPO $OPENSTACKCLIENT_DIR $OPENSTACKCLIENT_BRANCH
@@ -668,9 +705,9 @@ if is_service_enabled cinder; then
     configure_cinder
 fi
 
-if is_service_enabled quantum; then
-    install_quantum
-    install_quantum_third_party
+if is_service_enabled neutron; then
+    install_neutron
+    install_neutron_third_party
 fi
 
 if is_service_enabled nova; then
@@ -745,6 +782,22 @@ EOF
 EOF
         sudo mv /tmp/90-stack-s.conf /etc/rsyslog.d
     fi
+
+    RSYSLOGCONF="/etc/rsyslog.conf"
+    if [ -f $RSYSLOGCONF ]; then
+        sudo cp -b $RSYSLOGCONF $RSYSLOGCONF.bak
+        if [[ $(grep '$SystemLogRateLimitBurst' $RSYSLOGCONF)  ]]; then
+            sudo sed -i 's/$SystemLogRateLimitBurst\ .*/$SystemLogRateLimitBurst\ 0/' $RSYSLOGCONF
+        else
+            sudo sed -i '$ i $SystemLogRateLimitBurst\ 0' $RSYSLOGCONF
+        fi
+        if [[ $(grep '$SystemLogRateLimitInterval' $RSYSLOGCONF)  ]]; then
+            sudo sed -i 's/$SystemLogRateLimitInterval\ .*/$SystemLogRateLimitInterval\ 0/' $RSYSLOGCONF
+        else
+            sudo sed -i '$ i $SystemLogRateLimitInterval\ 0' $RSYSLOGCONF
+        fi
+    fi
+
     echo_summary "Starting rsyslog"
     restart_service rsyslog
 fi
@@ -777,6 +830,7 @@ if [[ "$USE_SCREEN" == "True" ]]; then
         SCREEN_HARDSTATUS='%{= .} %-Lw%{= .}%> %n%f %t*%{= .}%+Lw%< %-=%{g}(%{d}%H/%l%{g})'
     fi
     screen -r $SCREEN_NAME -X hardstatus alwayslastline "$SCREEN_HARDSTATUS"
+    screen -r $SCREEN_NAME -X setenv PROMPT_COMMAND /bin/true
 fi
 
 # Clear screen rc file
@@ -789,10 +843,10 @@ fi
 init_service_check
 
 
-# Kick off Sysstat
-# ------------------------
-# run sysstat if it is enabled, this has to be early as daemon
-# startup is one of the things to track.
+# Sysstat
+# -------
+
+# If enabled, systat has to start early to track OpenStack service startup.
 if is_service_enabled sysstat;then
     if [[ -n ${SCREEN_LOGDIR} ]]; then
         screen_it sysstat "sar -o $SCREEN_LOGDIR/$SYSSTAT_FILE $SYSSTAT_INTERVAL"
@@ -824,8 +878,9 @@ if is_service_enabled key; then
     export OS_SERVICE_ENDPOINT=$SERVICE_ENDPOINT
     create_keystone_accounts
     create_nova_accounts
+    create_swift_accounts
     create_cinder_accounts
-    create_quantum_accounts
+    create_neutron_accounts
 
     # ``keystone_data.sh`` creates services, admin and demo users, and roles.
     ADMIN_PASSWORD=$ADMIN_PASSWORD SERVICE_TENANT_NAME=$SERVICE_TENANT_NAME SERVICE_PASSWORD=$SERVICE_PASSWORD \
@@ -865,22 +920,22 @@ if is_service_enabled g-reg; then
 fi
 
 
-# Quantum
+# Neutron
 # -------
 
-if is_service_enabled quantum; then
-    echo_summary "Configuring Quantum"
+if is_service_enabled neutron; then
+    echo_summary "Configuring Neutron"
 
-    configure_quantum
-    init_quantum
+    configure_neutron
+    init_neutron
 fi
 
-# Some Quantum plugins require network controllers which are not
+# Some Neutron plugins require network controllers which are not
 # a part of the OpenStack project. Configure and start them.
-if is_service_enabled quantum; then
-    configure_quantum_third_party
-    init_quantum_third_party
-    start_quantum_third_party
+if is_service_enabled neutron; then
+    configure_neutron_third_party
+    init_neutron_third_party
+    start_neutron_third_party
 fi
 
 
@@ -906,7 +961,7 @@ if is_service_enabled n-net q-dhcp; then
     rm -rf ${NOVA_STATE_PATH}/networks
     sudo mkdir -p ${NOVA_STATE_PATH}/networks
     sudo chown -R ${USER} ${NOVA_STATE_PATH}/networks
-    # Force IP forwarding on, just on case
+    # Force IP forwarding on, just in case
     sudo sysctl -w net.ipv4.ip_forward=1
 fi
 
@@ -935,8 +990,8 @@ if is_service_enabled nova; then
     init_nova
 
     # Additional Nova configuration that is dependent on other services
-    if is_service_enabled quantum; then
-        create_nova_conf_quantum
+    if is_service_enabled neutron; then
+        create_nova_conf_neutron
     elif is_service_enabled n-net; then
         create_nova_conf_nova_network
     fi
@@ -947,10 +1002,11 @@ if is_service_enabled nova; then
 
     if [ "$VIRT_DRIVER" = 'xenserver' ]; then
         echo_summary "Using XenServer virtualization driver"
+        if [ -z "$XENAPI_CONNECTION_URL" ]; then
+            die $LINENO "XENAPI_CONNECTION_URL is not specified"
+        fi
         read_password XENAPI_PASSWORD "ENTER A PASSWORD TO USE FOR XEN."
         iniset $NOVA_CONF DEFAULT compute_driver "xenapi.XenAPIDriver"
-        XENAPI_CONNECTION_URL=${XENAPI_CONNECTION_URL:-"http://169.254.0.1"}
-        XENAPI_USER=${XENAPI_USER:-"root"}
         iniset $NOVA_CONF DEFAULT xenapi_connection_url "$XENAPI_CONNECTION_URL"
         iniset $NOVA_CONF DEFAULT xenapi_connection_username "$XENAPI_USER"
         iniset $NOVA_CONF DEFAULT xenapi_connection_password "$XENAPI_PASSWORD"
@@ -958,6 +1014,7 @@ if is_service_enabled nova; then
         # Need to avoid crash due to new firewall support
         XEN_FIREWALL_DRIVER=${XEN_FIREWALL_DRIVER:-"nova.virt.firewall.IptablesFirewallDriver"}
         iniset $NOVA_CONF DEFAULT firewall_driver "$XEN_FIREWALL_DRIVER"
+
 
     # OpenVZ
     # ------
@@ -968,6 +1025,7 @@ if is_service_enabled nova; then
         iniset $NOVA_CONF DEFAULT connection_type "openvz"
         LIBVIRT_FIREWALL_DRIVER=${LIBVIRT_FIREWALL_DRIVER:-"nova.virt.libvirt.firewall.IptablesFirewallDriver"}
         iniset $NOVA_CONF DEFAULT firewall_driver "$LIBVIRT_FIREWALL_DRIVER"
+
 
     # Bare Metal
     # ----------
@@ -991,6 +1049,7 @@ if is_service_enabled nova; then
            iniset $NOVA_CONF baremetal ${I/=/ }
         done
 
+
    # PowerVM
    # -------
 
@@ -1010,8 +1069,9 @@ if is_service_enabled nova; then
         iniset $NOVA_CONF DEFAULT powervm_img_remote_path $POWERVM_IMG_REMOTE_PATH
         iniset $NOVA_CONF DEFAULT powervm_img_local_path $POWERVM_IMG_LOCAL_PATH
 
+
     # vSphere API
-    # -------
+    # -----------
 
     elif [ "$VIRT_DRIVER" = 'vsphere' ]; then
         echo_summary "Using VMware vCenter driver"
@@ -1021,16 +1081,46 @@ if is_service_enabled nova; then
         iniset $NOVA_CONF DEFAULT vmwareapi_host_username "$VMWAREAPI_USER"
         iniset $NOVA_CONF DEFAULT vmwareapi_host_password "$VMWAREAPI_PASSWORD"
         iniset $NOVA_CONF DEFAULT vmwareapi_cluster_name "$VMWAREAPI_CLUSTER"
+        if is_service_enabled neutron; then
+            iniset $NOVA_CONF vmware integration_bridge $OVS_BRIDGE
+        fi
 
-    # Default
-    # -------
+    # fake
+    # ----
+
+    elif [ "$VIRT_DRIVER" = 'fake' ]; then
+        echo_summary "Using fake Virt driver"
+        iniset $NOVA_CONF DEFAULT compute_driver "nova.virt.fake.FakeDriver"
+        # Disable arbitrary limits
+        iniset $NOVA_CONF DEFAULT quota_instances -1
+        iniset $NOVA_CONF DEFAULT quota_cores -1
+        iniset $NOVA_CONF DEFAULT quota_ram -1
+        iniset $NOVA_CONF DEFAULT quota_floating_ips -1
+        iniset $NOVA_CONF DEFAULT quota_fixed_ips -1
+        iniset $NOVA_CONF DEFAULT quota_metadata_items -1
+        iniset $NOVA_CONF DEFAULT quota_injected_files -1
+        iniset $NOVA_CONF DEFAULT quota_injected_file_path_bytes -1
+        iniset $NOVA_CONF DEFAULT quota_security_groups -1
+        iniset $NOVA_CONF DEFAULT quota_security_group_rules -1
+        iniset $NOVA_CONF DEFAULT quota_key_pairs -1
+        iniset $NOVA_CONF DEFAULT scheduler_default_filters "RetryFilter,AvailabilityZoneFilter,ComputeFilter,ComputeCapabilitiesFilter,ImagePropertiesFilter"
+
+
+    # Default libvirt
+    # ---------------
 
     else
         echo_summary "Using libvirt virtualization driver"
         iniset $NOVA_CONF DEFAULT compute_driver "libvirt.LibvirtDriver"
         LIBVIRT_FIREWALL_DRIVER=${LIBVIRT_FIREWALL_DRIVER:-"nova.virt.libvirt.firewall.IptablesFirewallDriver"}
         iniset $NOVA_CONF DEFAULT firewall_driver "$LIBVIRT_FIREWALL_DRIVER"
+        # Power architecture currently does not support graphical consoles.
+        if is_arch "ppc64"; then
+            iniset $NOVA_CONF DEFAULT vnc_enabled "false"
+        fi
     fi
+
+    init_nova_cells
 fi
 
 # Extra things to prepare nova for baremetal, before nova starts
@@ -1085,24 +1175,29 @@ if is_service_enabled n-api; then
 fi
 
 if is_service_enabled q-svc; then
-    echo_summary "Starting Quantum"
+    echo_summary "Starting Neutron"
 
-    start_quantum_service_and_check
-    create_quantum_initial_network
-    setup_quantum_debug
+    start_neutron_service_and_check
+    create_neutron_initial_network
+    setup_neutron_debug
 elif is_service_enabled $DATABASE_BACKENDS && is_service_enabled n-net; then
+    NM_CONF=${NOVA_CONF}
+    if is_service_enabled n-cell; then
+        NM_CONF=${NOVA_CELLS_CONF}
+    fi
+
     # Create a small network
-    $NOVA_BIN_DIR/nova-manage network create "$PRIVATE_NETWORK_NAME" $FIXED_RANGE 1 $FIXED_NETWORK_SIZE $NETWORK_CREATE_ARGS
+    $NOVA_BIN_DIR/nova-manage --config-file $NM_CONF network create "$PRIVATE_NETWORK_NAME" $FIXED_RANGE 1 $FIXED_NETWORK_SIZE $NETWORK_CREATE_ARGS
 
     # Create some floating ips
-    $NOVA_BIN_DIR/nova-manage floating create $FLOATING_RANGE --pool=$PUBLIC_NETWORK_NAME
+    $NOVA_BIN_DIR/nova-manage --config-file $NM_CONF floating create $FLOATING_RANGE --pool=$PUBLIC_NETWORK_NAME
 
     # Create a second pool
-    $NOVA_BIN_DIR/nova-manage floating create --ip_range=$TEST_FLOATING_RANGE --pool=$TEST_FLOATING_POOL
+    $NOVA_BIN_DIR/nova-manage --config-file $NM_CONF floating create --ip_range=$TEST_FLOATING_RANGE --pool=$TEST_FLOATING_POOL
 fi
 
-if is_service_enabled quantum; then
-    start_quantum_agents
+if is_service_enabled neutron; then
+    start_neutron_agents
 fi
 if is_service_enabled nova; then
     echo_summary "Starting Nova"
@@ -1208,7 +1303,6 @@ if is_service_enabled nova && is_baremetal; then
     sudo pkill nova-baremetal-deploy-helper || true
     screen_it baremetal "nova-baremetal-deploy-helper"
 fi
-
 
 # Save some values we generated for later use
 CURRENT_RUN_TIME=$(date "+$TIMESTAMP_FORMAT")

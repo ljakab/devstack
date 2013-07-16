@@ -5,9 +5,8 @@
 # Tenant               User       Roles
 # ------------------------------------------------------------------
 # service              glance     admin
-# service              swift      admin        # if enabled
-# service              heat       admin        # if enabled
-# service              ceilometer admin        # if enabled
+# service              heat       service        # if enabled
+# service              ceilometer admin          # if enabled
 # Tempest Only:
 # alt_demo             alt_demo  Member
 #
@@ -47,6 +46,8 @@ MEMBER_ROLE=$(keystone role-list | awk "/ Member / { print \$2 }")
 # but ResellerAdmin is needed for a user to act as any tenant. The name of this
 # role is also configurable in swift-proxy.conf
 RESELLER_ROLE=$(get_id keystone role-create --name=ResellerAdmin)
+# Service role, so service users do not have to be admins
+SERVICE_ROLE=$(get_id keystone role-create --name=service)
 
 
 # Services
@@ -70,7 +71,7 @@ if [[ "$ENABLED_SERVICES" =~ "heat" ]]; then
                                               --email=heat@example.com)
     keystone user-role-add --tenant_id $SERVICE_TENANT \
                            --user_id $HEAT_USER \
-                           --role_id $ADMIN_ROLE
+                           --role_id $SERVICE_ROLE
     # heat_stack_user role is for users created by Heat
     keystone role-create --name heat_stack_user
     if [[ "$KEYSTONE_CATALOG_BACKEND" = 'sql' ]]; then
@@ -122,32 +123,7 @@ if [[ "$ENABLED_SERVICES" =~ "g-api" ]]; then
     fi
 fi
 
-# Swift
-
-if [[ "$ENABLED_SERVICES" =~ "swift" || "$ENABLED_SERVICES" =~ "s-proxy" ]]; then
-    SWIFT_USER=$(get_id keystone user-create \
-        --name=swift \
-        --pass="$SERVICE_PASSWORD" \
-        --tenant_id $SERVICE_TENANT \
-        --email=swift@example.com)
-    keystone user-role-add \
-        --tenant_id $SERVICE_TENANT \
-        --user_id $SWIFT_USER \
-        --role_id $ADMIN_ROLE
-    if [[ "$KEYSTONE_CATALOG_BACKEND" = 'sql' ]]; then
-        SWIFT_SERVICE=$(get_id keystone service-create \
-            --name=swift \
-            --type="object-store" \
-            --description="Swift Service")
-        keystone endpoint-create \
-            --region RegionOne \
-            --service_id $SWIFT_SERVICE \
-            --publicurl "http://$SERVICE_HOST:8080/v1/AUTH_\$(tenant_id)s" \
-            --adminurl "http://$SERVICE_HOST:8080" \
-            --internalurl "http://$SERVICE_HOST:8080/v1/AUTH_\$(tenant_id)s"
-    fi
-fi
-
+# Ceilometer
 if [[ "$ENABLED_SERVICES" =~ "ceilometer" ]]; then
     CEILOMETER_USER=$(get_id keystone user-create --name=ceilometer \
                                               --pass="$SERVICE_PASSWORD" \

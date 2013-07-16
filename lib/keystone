@@ -3,11 +3,12 @@
 
 # Dependencies:
 # ``functions`` file
+# ``DEST``, ``STACK_USER``
+# ``IDENTITY_API_VERSION``
 # ``BASE_SQL_CONN``
 # ``SERVICE_HOST``, ``SERVICE_PROTOCOL``
 # ``SERVICE_TOKEN``
 # ``S3_SERVICE_PORT`` (template backend only)
-# ``STACK_USER``
 
 # ``stack.sh`` calls the entry points in this order:
 #
@@ -119,6 +120,10 @@ function configure_keystone() {
         iniset $KEYSTONE_CONF identity driver "keystone.identity.backends.ldap.Identity"
     fi
 
+    # Set the URL advertised in the ``versions`` structure returned by the '/' route
+    iniset $KEYSTONE_CONF DEFAULT public_endpoint "$KEYSTONE_SERVICE_PROTOCOL://$KEYSTONE_SERVICE_HOST:%(public_port)s/"
+    iniset $KEYSTONE_CONF DEFAULT admin_endpoint "$KEYSTONE_SERVICE_PROTOCOL://$KEYSTONE_SERVICE_HOST:%(admin_port)s/"
+
     if is_service_enabled tls-proxy; then
         # Set the service ports for a proxy to take the originals
         iniset $KEYSTONE_CONF DEFAULT public_port $KEYSTONE_SERVICE_PORT_INT
@@ -151,12 +156,12 @@ function configure_keystone() {
             echo "catalog.RegionOne.object_store.name = Swift Service" >> $KEYSTONE_CATALOG
         fi
 
-        # Add quantum endpoints to service catalog if quantum is enabled
-        if is_service_enabled quantum; then
+        # Add neutron endpoints to service catalog if neutron is enabled
+        if is_service_enabled neutron; then
             echo "catalog.RegionOne.network.publicURL = http://%SERVICE_HOST%:$Q_PORT/" >> $KEYSTONE_CATALOG
             echo "catalog.RegionOne.network.adminURL = http://%SERVICE_HOST%:$Q_PORT/" >> $KEYSTONE_CATALOG
             echo "catalog.RegionOne.network.internalURL = http://%SERVICE_HOST%:$Q_PORT/" >> $KEYSTONE_CATALOG
-            echo "catalog.RegionOne.network.name = Quantum Service" >> $KEYSTONE_CATALOG
+            echo "catalog.RegionOne.network.name = Neutron Service" >> $KEYSTONE_CATALOG
         fi
 
         sed -e "
@@ -178,7 +183,6 @@ function configure_keystone() {
     cp $KEYSTONE_DIR/etc/logging.conf.sample $KEYSTONE_CONF_DIR/logging.conf
     iniset $KEYSTONE_CONF_DIR/logging.conf logger_root level "DEBUG"
     iniset $KEYSTONE_CONF_DIR/logging.conf logger_root handlers "devel,production"
-
 }
 
 # create_keystone_accounts() - Sets up common required keystone accounts
@@ -250,29 +254,10 @@ create_keystone_accounts() {
         keystone endpoint-create \
             --region RegionOne \
             --service_id $KEYSTONE_SERVICE \
-            --publicurl "$KEYSTONE_SERVICE_PROTOCOL://$KEYSTONE_SERVICE_HOST:$KEYSTONE_SERVICE_PORT/v2.0" \
-            --adminurl "$KEYSTONE_AUTH_PROTOCOL://$KEYSTONE_AUTH_HOST:$KEYSTONE_AUTH_PORT/v2.0" \
-            --internalurl "$KEYSTONE_SERVICE_PROTOCOL://$KEYSTONE_SERVICE_HOST:$KEYSTONE_SERVICE_PORT/v2.0"
+            --publicurl "$KEYSTONE_SERVICE_PROTOCOL://$KEYSTONE_SERVICE_HOST:$KEYSTONE_SERVICE_PORT/v$IDENTITY_API_VERSION" \
+            --adminurl "$KEYSTONE_AUTH_PROTOCOL://$KEYSTONE_AUTH_HOST:$KEYSTONE_AUTH_PORT/v$IDENTITY_API_VERSION" \
+            --internalurl "$KEYSTONE_SERVICE_PROTOCOL://$KEYSTONE_SERVICE_HOST:$KEYSTONE_SERVICE_PORT/v$IDENTITY_API_VERSION"
     fi
-
-    # TODO(dtroyer): This is part of a series of changes...remove these when
-    #                complete if they are really unused
-#    KEYSTONEADMIN_ROLE=$(keystone role-create \
-#        --name KeystoneAdmin \
-#        | grep " id " | get_field 2)
-#    KEYSTONESERVICE_ROLE=$(keystone role-create \
-#        --name KeystoneServiceAdmin \
-#        | grep " id " | get_field 2)
-
-    # TODO(termie): these two might be dubious
-#    keystone user-role-add \
-#        --user_id $ADMIN_USER \
-#        --role_id $KEYSTONEADMIN_ROLE \
-#        --tenant_id $ADMIN_TENANT
-#    keystone user-role-add \
-#        --user_id $ADMIN_USER \
-#        --role_id $KEYSTONESERVICE_ROLE \
-#        --tenant_id $ADMIN_TENANT
 }
 
 # init_keystone() - Initialize databases, etc.
@@ -322,7 +307,7 @@ function start_keystone() {
     # Start Keystone in a screen window
     screen_it key "cd $KEYSTONE_DIR && $KEYSTONE_DIR/bin/keystone-all --config-file $KEYSTONE_CONF $KEYSTONE_LOG_CONFIG -d --debug"
     echo "Waiting for keystone to start..."
-    if ! timeout $SERVICE_TIMEOUT sh -c "while ! http_proxy= curl -s http://$SERVICE_HOST:$service_port/v2.0/ >/dev/null; do sleep 1; done"; then
+    if ! timeout $SERVICE_TIMEOUT sh -c "while ! http_proxy= curl -s http://$SERVICE_HOST:$service_port/v$IDENTITY_API_VERSION/ >/dev/null; do sleep 1; done"; then
       die $LINENO "keystone did not start"
     fi
 
@@ -338,6 +323,7 @@ function stop_keystone() {
     # Kill the Keystone screen window
     screen -S $SCREEN_NAME -p key -X kill
 }
+
 
 # Restore xtrace
 $XTRACE

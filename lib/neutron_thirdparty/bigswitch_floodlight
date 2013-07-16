@@ -7,14 +7,13 @@ set +o xtrace
 
 BS_FL_CONTROLLERS_PORT=${BS_FL_CONTROLLERS_PORT:-localhost:80}
 BS_FL_OF_PORT=${BS_FL_OF_PORT:-6633}
-OVS_BRIDGE=${OVS_BRIDGE:-br-int}
 
 function configure_bigswitch_floodlight() {
     :
 }
 
 function init_bigswitch_floodlight() {
-    install_quantum_agent_packages
+    install_neutron_agent_packages
 
     echo -n "Installing OVS managed by the openflow controllers:"
     echo ${BS_FL_CONTROLLERS_PORT}

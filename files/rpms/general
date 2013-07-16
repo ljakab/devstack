@@ -6,12 +6,12 @@ gcc # dist:rhel6 [2]
 git-core
 openssh-server
 openssl
+openssl-devel # to rebuild pyOpenSSL if needed
 libxml2-devel # dist:rhel6 [2]
 libxslt-devel # dist:rhel6 [2]
 psmisc
 pylint
 python-netaddr
-python-pep8
 python-pip
 python-prettytable # dist:rhel6 [1]
 python-unittest2

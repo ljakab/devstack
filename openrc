@@ -37,7 +37,7 @@ source $RC_DIR/lib/tls
 # The introduction of Keystone to the OpenStack ecosystem has standardized the
 # term **tenant** as the entity that owns resources.  In some places references
 # still exist to the original Nova term **project** for this use.  Also,
-# **tenant_name** is prefered to **tenant_id**.
+# **tenant_name** is preferred to **tenant_id**.
 export OS_TENANT_NAME=${OS_TENANT_NAME:-demo}
 
 # In addition to the owning entity (tenant), nova stores the entity performing
@@ -75,12 +75,11 @@ export OS_AUTH_URL=$SERVICE_PROTOCOL://$SERVICE_HOST:5000/v2.0
 # Set the pointer to our CA certificate chain.  Harmless if TLS is not used.
 export OS_CACERT=$INT_CA_DIR/ca-chain.pem
 
+# Identity API version
+export OS_IDENTITY_API_VERSION=${IDENTITY_API_VERSION:-2.0}
+
 # Currently novaclient needs you to specify the *compute api* version.  This
 # needs to match the config of your catalog returned by Keystone.
 export NOVA_VERSION=${NOVA_VERSION:-1.1}
 # In the future this will change names:
 export COMPUTE_API_VERSION=${COMPUTE_API_VERSION:-$NOVA_VERSION}
-
-# set log level to DEBUG (helps debug issues)
-# export KEYSTONECLIENT_DEBUG=1
-# export NOVACLIENT_DEBUG=1

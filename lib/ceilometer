@@ -1,8 +1,8 @@
 # lib/ceilometer
 # Install and start **Ceilometer** service
 
-# To enable, add the following to localrc
-# ENABLED_SERVICES+=ceilometer-acompute,ceilometer-acentral,ceilometer-collector,ceilometer-api
+# To enable Ceilometer services, add the following to localrc
+# enable_service ceilometer-acompute ceilometer-acentral ceilometer-collector ceilometer-api
 
 # Dependencies:
 # - functions
@@ -70,7 +70,7 @@ function configure_ceilometer() {
 
     iniset_rpc_backend ceilometer $CEILOMETER_CONF DEFAULT
 
-    iniset $CEILOMETER_CONF DEFAULT notification_topics 'notifications,glance_notifications'
+    iniset $CEILOMETER_CONF DEFAULT notification_topics 'notifications'
     iniset $CEILOMETER_CONF DEFAULT verbose True
 
     # Install the policy file for the API server
@@ -90,6 +90,8 @@ function configure_ceilometer() {
     iniset $CEILOMETER_CONF keystone_authtoken admin_password $SERVICE_PASSWORD
     iniset $CEILOMETER_CONF keystone_authtoken admin_tenant_name $SERVICE_TENANT_NAME
     iniset $CEILOMETER_CONF keystone_authtoken signing_dir $CEILOMETER_AUTH_CACHE_DIR
+
+    iniset $CEILOMETER_CONF database connection mongodb://localhost:27017/ceilometer
 
     configure_mongodb
 
@@ -125,10 +127,10 @@ function install_ceilometerclient() {
 
 # start_ceilometer() - Start running processes, including screen
 function start_ceilometer() {
-    screen_it ceilometer-acompute "cd $CEILOMETER_DIR && sg $LIBVIRT_GROUP \"$CEILOMETER_BIN_DIR/ceilometer-agent-compute --config-file $CEILOMETER_CONF\""
-    screen_it ceilometer-acentral "cd $CEILOMETER_DIR && $CEILOMETER_BIN_DIR/ceilometer-agent-central --config-file $CEILOMETER_CONF"
-    screen_it ceilometer-collector "cd $CEILOMETER_DIR && $CEILOMETER_BIN_DIR/ceilometer-collector --config-file $CEILOMETER_CONF"
-    screen_it ceilometer-api "cd $CEILOMETER_DIR && $CEILOMETER_BIN_DIR/ceilometer-api -d -v --log-dir=$CEILOMETER_API_LOG_DIR --config-file $CEILOMETER_CONF"
+    screen_it ceilometer-acompute "sg $LIBVIRT_GROUP \"ceilometer-agent-compute --config-file $CEILOMETER_CONF\""
+    screen_it ceilometer-acentral "ceilometer-agent-central --config-file $CEILOMETER_CONF"
+    screen_it ceilometer-collector "ceilometer-collector --config-file $CEILOMETER_CONF"
+    screen_it ceilometer-api "ceilometer-api -d -v --log-dir=$CEILOMETER_API_LOG_DIR --config-file $CEILOMETER_CONF"
 }
 
 # stop_ceilometer() - Stop running processes
