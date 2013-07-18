@@ -1065,6 +1065,7 @@ function _configure_n1kv_subplugin() {
     iniset $cisco_cfg_file CISCO_N1K enable_tunneling $Q_CISCO_PLUGIN_ENABLE_TUNNELING
     iniset $cisco_cfg_file CISCO_N1K vxlan_id_ranges $Q_CISCO_PLUGIN_VXLAN_ID_RANGES
     iniset $cisco_cfg_file CISCO_N1K network_vlan_ranges $Q_CISCO_PLUGIN_VLAN_RANGES
+    iniset $cisco_cfg_file CISCO_N1K default_policy_profile test-profile
 
     # Before n1kv plugin code is pushed upstream, the following is required so
     # that profile commands from cisco plugin is available
