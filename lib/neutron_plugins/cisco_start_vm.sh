@@ -106,5 +106,5 @@ fi
 if [[ $port_id != '' ]]; then
     rno=$RANDOM
     echo "nova boot --image $image_id --flavor 1 --nic port-id=$port_id VM_$rno"
-    nova boot --image $image_id --flavor 1 --nic port-_id=$port_id VM_$rno
+    nova boot --image $image_id --flavor 1 --nic port-id=$port_id VM_$rno
 fi

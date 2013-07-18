@@ -1015,7 +1015,7 @@ function _configure_uvem() {
 
     # Before n1kv plugin code is pushed upstream, the following is required so
     # that profile commands from cisco plugin is available
-#    sudo cp -r $NEUTRONCLIENT_DIR/neutronclient /usr/local/lib/python2.7/dist-packages/
+    sudo cp -r $NEUTRONCLIENT_DIR/neutronclient /usr/local/lib/python2.7/dist-packages/
 
     #copy the uVEM image
     if [[ -z "$Q_CISCO_PLUGIN_UVEM_DEB_IMAGE" ]]; then
