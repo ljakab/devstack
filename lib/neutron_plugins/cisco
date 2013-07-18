@@ -1114,8 +1114,8 @@ function neutron_plugin_configure_service() {
     for subplugin in ${Q_CISCO_PLUGIN_SUBPLUGINS[@]}; do
         case $subplugin in
             nexus) iniset $cisco_cfg_file CISCO_PLUGINS nexus_plugin neutron.plugins.cisco.nexus.cisco_nexus_plugin_v2.NexusPlugin;;
-            openvswitch) iniset $cisco_cfg_file CISCO_PLUGINS vswitch_plugin neutron.plugins.openvswitch.ovs_neutron_plugin.OVSQuantumPluginV2;;
-            n1kv) iniset $cisco_cfg_file CISCO_PLUGINS vswitch_plugin neutron.plugins.cisco.n1kv.n1kv_neutron_plugin.N1kvQuantumPluginV2;;
+            openvswitch) iniset $cisco_cfg_file CISCO_PLUGINS vswitch_plugin neutron.plugins.openvswitch.ovs_neutron_plugin.OVSNeutronPluginV2;;
+            n1kv) iniset $cisco_cfg_file CISCO_PLUGINS vswitch_plugin neutron.plugins.cisco.n1kv.n1kv_neutron_plugin.N1kvNeutronPluginV2;;
             *) die $LINENO "Unsupported cisco subplugin: $subplugin";;
         esac
     done
