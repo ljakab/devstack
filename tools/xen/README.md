@@ -25,15 +25,16 @@ Steps to follow:
 The `install_os_domU.sh` script will:
  - Setup XenAPI plugins
  - Create the named networks, if they don't exist
- - Install an Ubuntu Virtual Machine, with 4 network interfaces:
-   - eth0 - internal xapi interface
-   - eth1 - VM interface, connected to `VM_BRIDGE_OR_NET_NAME` defaults to
-   `"OpenStack VM Network"`.
-   - eth2 - Management interface, connected to `MGT_BRIDGE_OR_NET_NAME`,
-     defaults to `xenbr0`, XenServer's bridge associated with the Hypervisors
-     `eth0`.
-   - eth3 - Public interface, connected to `PUB_BRIDGE_OR_NET_NAME` defaults to
-   `"OpenStack Public Network"`.
+ - Preseed-Netinstall an Ubuntu Virtual Machine, with 1 network interface:
+   - eth0 - Connected to `UBUNTU_INST_BRIDGE_OR_NET_NAME`, defaults to
+   `MGT_BRIDGE_OR_NET_NAME`
+ - After the Ubuntu install process finished, the network configuration is
+ modified to:
+   - eth0 - Management interface, connected to `MGT_BRIDGE_OR_NET_NAME`
+   - eth1 - VM interface, connected to `VM_BRIDGE_OR_NET_NAME`
+   - eth2 - Public interface, connected to `PUB_BRIDGE_OR_NET_NAME`
+   - (eth3) - Optional network interface if neutron is used, to enforce xapi to
+   create the underlying bridge.
  - Start devstack inside the created OpenStack VM
 
 ## Step 1: Install Xenserver
@@ -92,30 +93,9 @@ Of course, use real passwords if this machine is exposed.
     MULTI_HOST=1
     # Give extra time for boot
     ACTIVE_TIMEOUT=45
-    # Host Interface, i.e. the interface on the OpenStack vm you want to expose
-    # the services on. The default is eth3, which means the public network, but
-    # as the public network is going to be virtual, we are setting the services
-    # to listen on the management network, which defaults to 'xenbr0', the
-    # XenServer's network.
-    HOST_IP_IFACE=eth2
-
-    # Use DHCP server to configure the Management IP of OpenStack VM
-    MGT_IP="dhcp"
-
-    # Settings for netinstalling Ubuntu
-    UBUNTU_INST_RELEASE=precise
-
-    # First time Ubuntu network install params, use the DHCP server on the
-    # management network
-    UBUNTU_INST_IFACE="eth2"
-    UBUNTU_INST_IP="dhcp"
 
     # NOTE: the value of FLAT_NETWORK_BRIDGE will automatically be determined
     # by install_os_domU.sh script.
-
-    # Public IP address is aligned with the devstack defaults (see FLOATING_RANGE)
-    PUB_IP=172.24.4.10
-    PUB_NETMASK=255.255.255.0
     EOF
 
 ## Step 4: Run `./install_os_domU.sh` from the `tools/xen` directory

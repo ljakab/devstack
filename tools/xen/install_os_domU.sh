@@ -50,6 +50,15 @@ xe_min()
 
 cd $THIS_DIR
 
+# Die if multiple hosts listed
+if have_multiple_hosts; then
+    cat >&2 << EOF
+ERROR: multiple hosts found. This might mean that the XenServer is a member
+of a pool - Exiting.
+EOF
+    exit 1
+fi
+
 # Install plugins
 
 ## Nova plugins
@@ -58,11 +67,12 @@ install_xapi_plugins_from_zipball $NOVA_ZIPBALL_URL
 
 ## Install the netwrap xapi plugin to support agent control of dom0 networking
 if [[ "$ENABLED_SERVICES" =~ "q-agt" && "$Q_PLUGIN" = "openvswitch" ]]; then
-    QUANTUM_ZIPBALL_URL=${QUANTUM_ZIPBALL_URL:-$(zip_snapshot_location $QUANTUM_REPO $QUANTUM_BRANCH)}
-    install_xapi_plugins_from_zipball $QUANTUM_ZIPBALL_URL
+    NEUTRON_ZIPBALL_URL=${NEUTRON_ZIPBALL_URL:-$(zip_snapshot_location $NEUTRON_REPO $NEUTRON_BRANCH)}
+    install_xapi_plugins_from_zipball $NEUTRON_ZIPBALL_URL
 fi
 
 create_directory_for_kernels
+create_directory_for_images
 
 #
 # Configure Networking
@@ -71,9 +81,9 @@ setup_network "$VM_BRIDGE_OR_NET_NAME"
 setup_network "$MGT_BRIDGE_OR_NET_NAME"
 setup_network "$PUB_BRIDGE_OR_NET_NAME"
 
-# With quantum, one more network is required, which is internal to the
+# With neutron, one more network is required, which is internal to the
 # hypervisor, and used by the VMs
-if is_service_enabled quantum; then
+if is_service_enabled neutron; then
     setup_network "$XEN_INT_BRIDGE_OR_NET_NAME"
 fi
 
@@ -198,13 +208,11 @@ if [ -z "$templateuuid" ]; then
     # Update the template
     $THIS_DIR/scripts/install_ubuntu_template.sh $PRESEED_URL
 
-    # create a new VM with the given template
-    # creating the correct VIFs and metadata
+    # create a new VM from the given template with eth0 attached to the given
+    # network
     $THIS_DIR/scripts/install-os-vpx.sh \
         -t "$UBUNTU_INST_TEMPLATE_NAME" \
-        -v "$VM_BRIDGE_OR_NET_NAME" \
-        -m "$MGT_BRIDGE_OR_NET_NAME" \
-        -p "$PUB_BRIDGE_OR_NET_NAME" \
+        -n "$UBUNTU_INST_BRIDGE_OR_NET_NAME" \
         -l "$GUEST_NAME" \
         -r "$OSDOMU_MEM_MB"
 
@@ -238,6 +246,15 @@ else
     vm_uuid=$(xe vm-install template="$TNAME" new-name-label="$GUEST_NAME")
 fi
 
+## Setup network cards
+# Wipe out all
+destroy_all_vifs_of "$GUEST_NAME"
+# Tenant network
+add_interface "$GUEST_NAME" "$VM_BRIDGE_OR_NET_NAME" "$VM_DEV_NR"
+# Management network
+add_interface "$GUEST_NAME" "$MGT_BRIDGE_OR_NET_NAME" "$MGT_DEV_NR"
+# Public network
+add_interface "$GUEST_NAME" "$PUB_BRIDGE_OR_NET_NAME" "$PUB_DEV_NR"
 
 #
 # Inject DevStack inside VM disk
@@ -245,10 +262,10 @@ fi
 $THIS_DIR/build_xva.sh "$GUEST_NAME"
 
 # Attach a network interface for the integration network (so that the bridge
-# is created by XenServer). This is required for Quantum. Also pass that as a
+# is created by XenServer). This is required for Neutron. Also pass that as a
 # kernel parameter for DomU
-if is_service_enabled quantum; then
-    add_interface "$GUEST_NAME" "$XEN_INT_BRIDGE_OR_NET_NAME" "4"
+if is_service_enabled neutron; then
+    attach_network "$XEN_INT_BRIDGE_OR_NET_NAME"
 
     XEN_INTEGRATION_BRIDGE=$(bridge_for "$XEN_INT_BRIDGE_OR_NET_NAME")
     append_kernel_cmdline \
@@ -258,6 +275,19 @@ fi
 
 FLAT_NETWORK_BRIDGE=$(bridge_for "$VM_BRIDGE_OR_NET_NAME")
 append_kernel_cmdline "$GUEST_NAME" "flat_network_bridge=${FLAT_NETWORK_BRIDGE}"
+
+# Add a separate xvdb, if it was requested
+if [[ "0" != "$XEN_XVDB_SIZE_GB" ]]; then
+    vm=$(xe vm-list name-label="$GUEST_NAME" --minimal)
+
+    # Add a new disk
+    localsr=$(get_local_sr)
+    extra_vdi=$(xe vdi-create \
+        name-label=xvdb-added-by-devstack \
+        virtual-size="${XEN_XVDB_SIZE_GB}GiB" \
+        sr-uuid=$localsr type=user)
+    xe vbd-create vm-uuid=$vm vdi-uuid=$extra_vdi device=1
+fi
 
 # create a snapshot before the first boot
 # to allow a quick re-run with the same settings
@@ -275,19 +305,19 @@ function ssh_no_check() {
 # Get hold of the Management IP of OpenStack VM
 OS_VM_MANAGEMENT_ADDRESS=$MGT_IP
 if [ $OS_VM_MANAGEMENT_ADDRESS == "dhcp" ]; then
-    OS_VM_MANAGEMENT_ADDRESS=$(find_ip_by_name $GUEST_NAME 2)
+    OS_VM_MANAGEMENT_ADDRESS=$(find_ip_by_name $GUEST_NAME $MGT_DEV_NR)
 fi
 
 # Get hold of the Service IP of OpenStack VM
-if [ $HOST_IP_IFACE == "eth2" ]; then
+if [ $HOST_IP_IFACE == "eth${MGT_DEV_NR}" ]; then
     OS_VM_SERVICES_ADDRESS=$MGT_IP
     if [ $MGT_IP == "dhcp" ]; then
-        OS_VM_SERVICES_ADDRESS=$(find_ip_by_name $GUEST_NAME 2)
+        OS_VM_SERVICES_ADDRESS=$(find_ip_by_name $GUEST_NAME $MGT_DEV_NR)
     fi
 else
     OS_VM_SERVICES_ADDRESS=$PUB_IP
     if [ $PUB_IP == "dhcp" ]; then
-        OS_VM_SERVICES_ADDRESS=$(find_ip_by_name $GUEST_NAME 3)
+        OS_VM_SERVICES_ADDRESS=$(find_ip_by_name $GUEST_NAME $PUB_DEV_NR)
     fi
 fi
 

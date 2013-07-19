@@ -42,7 +42,7 @@ source $TOP_DIR/lib/cinder
 source $TOP_DIR/lib/swift
 source $TOP_DIR/lib/ceilometer
 source $TOP_DIR/lib/heat
-source $TOP_DIR/lib/quantum
+source $TOP_DIR/lib/neutron
 source $TOP_DIR/lib/baremetal
 source $TOP_DIR/lib/ldap
 
@@ -60,10 +60,10 @@ cleanup_cinder
 cleanup_glance
 cleanup_keystone
 cleanup_nova
-cleanup_quantum
+cleanup_neutron
 cleanup_swift
 
-# cinder doesn't clean up the volume group as it might be used elsewhere...
+# cinder doesn't always clean up the volume group as it might be used elsewhere...
 # clean it up if it is a loop device
 VG_DEV=$(sudo losetup -j $DATA_DIR/${VOLUME_GROUP}-backing-file | awk -F':' '/backing-file/ { print $1}')
 if [[ -n "$VG_DEV" ]]; then

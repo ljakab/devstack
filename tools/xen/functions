@@ -1,7 +1,7 @@
 #!/bin/bash
 
 function xapi_plugin_location {
-    for PLUGIN_DIR in "/etc/xapi.d/plugins/" "/usr/lib/xcp/plugins/"; do
+    for PLUGIN_DIR in "/etc/xapi.d/plugins/" "/usr/lib/xcp/plugins/" "/usr/lib/xapi/plugins"; do
         if [ -d $PLUGIN_DIR ]; then
             echo $PLUGIN_DIR
             return 0
@@ -24,17 +24,27 @@ function create_directory_for_kernels {
     fi
 }
 
+function create_directory_for_images {
+    if [ -d "/images" ]; then
+        echo "INFO: /images directory already exists, using that" >&2
+    else
+        local LOCALPATH="$(get_local_sr_path)/os-images"
+        mkdir -p $LOCALPATH
+        ln -s $LOCALPATH /images
+    fi
+}
+
 function extract_remote_zipball {
     local ZIPBALL_URL=$1
 
     local LOCAL_ZIPBALL=$(mktemp)
     local EXTRACTED_FILES=$(mktemp -d)
 
-    (
+    {
         wget -nv $ZIPBALL_URL -O $LOCAL_ZIPBALL --no-check-certificate
         unzip -q -o $LOCAL_ZIPBALL -d $EXTRACTED_FILES
         rm -f $LOCAL_ZIPBALL
-    ) >&2
+    } >&2
 
     echo "$EXTRACTED_FILES"
 }
@@ -223,4 +233,38 @@ function append_kernel_cmdline()
     vm=$(_vm_uuid "$vm_name_label")
     pv_args=$(xe vm-param-get param-name=PV-args uuid=$vm)
     xe vm-param-set PV-args="$pv_args $kernel_args" uuid=$vm
+}
+
+function destroy_all_vifs_of()
+{
+    local vm_name_label
+
+    vm_name_label="$1"
+
+    local vm
+
+    vm=$(_vm_uuid "$vm_name_label")
+    IFS=,
+    for vif in $(xe vif-list vm-uuid=$vm --minimal); do
+        xe vif-destroy uuid="$vif"
+    done
+    unset IFS
+}
+
+function have_multiple_hosts() {
+    xe host-list --minimal | grep -q ","
+}
+
+function attach_network() {
+    local bridge_or_net_name
+
+    bridge_or_net_name="$1"
+
+    local net
+    local host
+
+    net=$(_network_uuid "$bridge_or_net_name")
+    host=$(xe host-list --minimal)
+
+    xe network-attach uuid=$net host-uuid=$host
 }
