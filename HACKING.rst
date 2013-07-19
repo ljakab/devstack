@@ -110,7 +110,7 @@ follows:
 * Global service configuration like ``ENABLED_SERVICES``
 * Variables used by multiple services that do not have a clear owner, i.e.
   ``VOLUME_BACKING_FILE_SIZE`` (nova-volumes and cinder) or ``PUBLIC_NETWORK_NAME``
-  (nova-network and quantum)
+  (nova-network and neutron)
 * Variables that can not be cleanly declared in a project file due to
   dependency ordering, i.e. the order of sourcing the project files can
   not be changed for other reasons but the earlier file needs to dereference a
@@ -174,7 +174,7 @@ These scripts are executed serially by ``exercise.sh`` in testing situations.
   the script on non-zero exit codes::
 
     # This script exits on an error so that errors don't compound and you see
-    # only the first error that occured.
+    # only the first error that occurred.
     set -o errexit
 
     # Print the commands being run so that we can see the command that triggers

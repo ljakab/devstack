@@ -37,7 +37,7 @@ fi
 builtin_name="Debian Squeeze 6.0 (32-bit)"
 builtin_uuid=$(xe template-list name-label="$builtin_name" --minimal)
 if [[ -z $builtin_uuid ]]; then
-    echo "Cant find the Debian Squeeze 32bit template on your XenServer."
+    echo "Can't find the Debian Squeeze 32bit template on your XenServer."
     exit 1
 fi
 
@@ -53,7 +53,7 @@ disk_size=$(($OSDOMU_VDI_GB * 1024 * 1024 * 1024))
 pvargs="-- quiet console=hvc0 partman/default_filesystem=ext3 \
 console-setup/ask_detect=false locale=${UBUNTU_INST_LOCALE} \
 keyboard-configuration/layoutcode=${UBUNTU_INST_KEYBOARD} \
-netcfg/choose_interface=${UBUNTU_INST_IFACE} \
+netcfg/choose_interface=eth0 \
 netcfg/get_hostname=os netcfg/get_domain=os auto \
 url=${preseed_url}"
 

@@ -81,7 +81,7 @@ if [ "$VIRT_DRIVER" = 'xenserver' ]; then
     GUEST_INTERFACE_DEFAULT=eth1
     # Allow ``build_domU.sh`` to specify the flat network bridge via kernel args
     FLAT_NETWORK_BRIDGE_DEFAULT=$(sed -e 's/.* flat_network_bridge=\([[:alnum:]]*\).*$/\1/g' /proc/cmdline)
-    if is_service_enabled quantum; then
+    if is_service_enabled neutron; then
         XEN_INTEGRATION_BRIDGE=$(sed -e 's/.* xen_integration_bridge=\([[:alnum:]]*\).*$/\1/g' /proc/cmdline)
     fi
 elif [ "$VIRT_DRIVER" = 'baremetal' ]; then
@@ -281,7 +281,7 @@ function configure_nova() {
         fi
 
         if [[ "$VIRT_DRIVER" = 'libvirt' ]]; then
-            if is_service_enabled quantum && is_quantum_ovs_base_plugin && ! sudo grep -q '^cgroup_device_acl' $QEMU_CONF; then
+            if is_service_enabled neutron && is_neutron_ovs_base_plugin && ! sudo grep -q '^cgroup_device_acl' $QEMU_CONF; then
                 # Add /dev/net/tun to cgroup_device_acls, needed for type=ethernet interfaces
                 cat <<EOF | sudo tee -a $QEMU_CONF
 cgroup_device_acl = [
@@ -407,6 +407,17 @@ create_nova_accounts() {
                 --publicurl "$NOVA_SERVICE_PROTOCOL://$NOVA_SERVICE_HOST:$NOVA_SERVICE_PORT/v2/\$(tenant_id)s" \
                 --adminurl "$NOVA_SERVICE_PROTOCOL://$NOVA_SERVICE_HOST:$NOVA_SERVICE_PORT/v2/\$(tenant_id)s" \
                 --internalurl "$NOVA_SERVICE_PROTOCOL://$NOVA_SERVICE_HOST:$NOVA_SERVICE_PORT/v2/\$(tenant_id)s"
+            NOVA_V3_SERVICE=$(keystone service-create \
+                --name=nova \
+                --type=computev3 \
+                --description="Nova Compute Service V3" \
+                | grep " id " | get_field 2)
+            keystone endpoint-create \
+                --region RegionOne \
+                --service_id $NOVA_V3_SERVICE \
+                --publicurl "$NOVA_SERVICE_PROTOCOL://$NOVA_SERVICE_HOST:$NOVA_SERVICE_PORT/v3" \
+                --adminurl "$NOVA_SERVICE_PROTOCOL://$NOVA_SERVICE_HOST:$NOVA_SERVICE_PORT/v3" \
+                --internalurl "$NOVA_SERVICE_PROTOCOL://$NOVA_SERVICE_HOST:$NOVA_SERVICE_PORT/v3"
         fi
     fi
 }
@@ -424,7 +435,7 @@ function create_nova_conf() {
     iniset $NOVA_CONF DEFAULT allow_resize_to_same_host "True"
     iniset $NOVA_CONF DEFAULT api_paste_config "$NOVA_API_PASTE_INI"
     iniset $NOVA_CONF DEFAULT rootwrap_config "$NOVA_CONF_DIR/rootwrap.conf"
-    iniset $NOVA_CONF DEFAULT compute_scheduler_driver "$SCHEDULER"
+    iniset $NOVA_CONF DEFAULT scheduler_driver "$SCHEDULER"
     iniset $NOVA_CONF DEFAULT dhcpbridge_flagfile "$NOVA_CONF"
     iniset $NOVA_CONF DEFAULT force_dhcp_release "True"
     iniset $NOVA_CONF DEFAULT fixed_range ""
@@ -490,6 +501,7 @@ function create_nova_conf() {
     if is_service_enabled ceilometer; then
         iniset $NOVA_CONF DEFAULT instance_usage_audit "True"
         iniset $NOVA_CONF DEFAULT instance_usage_audit_period "hour"
+        iniset $NOVA_CONF DEFAULT notify_on_state_change "vm_and_task_state"
         iniset_multiline $NOVA_CONF DEFAULT notification_driver "nova.openstack.common.notifier.rpc_notifier" "ceilometer.compute.nova_notifier"
     fi
 

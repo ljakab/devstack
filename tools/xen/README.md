@@ -25,21 +25,15 @@ Steps to follow:
 The `install_os_domU.sh` script will:
  - Setup XenAPI plugins
  - Create the named networks, if they don't exist
- - Install an Ubuntu Virtual Machine, with 4 network interfaces:
-   - eth0 - internal xapi interface
-   - eth1 - VM interface, connected to `VM_BRIDGE_OR_NET_NAME` defaults to
-   `"OpenStack VM Network"`.
-   - eth2 - Management interface, connected to `MGT_BRIDGE_OR_NET_NAME`,
-     defaults to `xenbr0`, XenServer's bridge associated with the Hypervisors
-     `eth0`.
-   - eth3 - Public interface, connected to `PUB_BRIDGE_OR_NET_NAME` defaults to
-   `"OpenStack Public Network"`.
+ - Preseed-Netinstall an Ubuntu Virtual Machine, with 1 network interface:
+   - eth0 - Connected to `UBUNTU_INST_BRIDGE_OR_NET_NAME`, defaults to
+   `MGT_BRIDGE_OR_NET_NAME`
  - After the Ubuntu install process finished, the network configuration is
  modified to:
    - eth0 - Management interface, connected to `MGT_BRIDGE_OR_NET_NAME`
    - eth1 - VM interface, connected to `VM_BRIDGE_OR_NET_NAME`
    - eth2 - Public interface, connected to `PUB_BRIDGE_OR_NET_NAME`
-   - (eth3) - Optional network interface if quantum is used, to enforce xapi to
+   - (eth3) - Optional network interface if neutron is used, to enforce xapi to
    create the underlying bridge.
  - Start devstack inside the created OpenStack VM
 
@@ -99,9 +93,6 @@ Of course, use real passwords if this machine is exposed.
     MULTI_HOST=1
     # Give extra time for boot
     ACTIVE_TIMEOUT=45
-
-    # Settings for netinstalling Ubuntu
-    UBUNTU_INST_RELEASE=precise
 
     # NOTE: the value of FLAT_NETWORK_BRIDGE will automatically be determined
     # by install_os_domU.sh script.

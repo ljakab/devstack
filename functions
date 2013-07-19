@@ -262,8 +262,8 @@ function get_packages() {
                 file_to_parse="${file_to_parse} keystone"
             fi
         elif [[ $service == q-* ]]; then
-            if [[ ! $file_to_parse =~ quantum ]]; then
-                file_to_parse="${file_to_parse} quantum"
+            if [[ ! $file_to_parse =~ neutron ]]; then
+                file_to_parse="${file_to_parse} neutron"
             fi
         fi
     done
@@ -717,7 +717,7 @@ function is_running() {
 #   **cinder** returns true if any service enabled start with **c-**
 #   **ceilometer** returns true if any service enabled start with **ceilometer**
 #   **glance** returns true if any service enabled start with **g-**
-#   **quantum** returns true if any service enabled start with **q-**
+#   **neutron** returns true if any service enabled start with **q-**
 #   **swift** returns true if any service enabled start with **s-**
 #   For backward compatibility if we have **swift** in ENABLED_SERVICES all the
 #   **s-** services will be enabled. This will be deprecated in the future.
@@ -732,7 +732,7 @@ function is_service_enabled() {
         [[ ${service} == "cinder" && ${ENABLED_SERVICES} =~ "c-" ]] && return 0
         [[ ${service} == "ceilometer" && ${ENABLED_SERVICES} =~ "ceilometer-" ]] && return 0
         [[ ${service} == "glance" && ${ENABLED_SERVICES} =~ "g-" ]] && return 0
-        [[ ${service} == "quantum" && ${ENABLED_SERVICES} =~ "q-" ]] && return 0
+        [[ ${service} == "neutron" && ${ENABLED_SERVICES} =~ "q-" ]] && return 0
         [[ ${service} == "swift" && ${ENABLED_SERVICES} =~ "s-" ]] && return 0
         [[ ${service} == s-* && ${ENABLED_SERVICES} =~ "swift" ]] && return 0
     done
@@ -758,7 +758,7 @@ function _cleanup_service_list () {
 #   enable_service qpid
 #
 # This function does not know about the special cases
-# for nova, glance, and quantum built into is_service_enabled().
+# for nova, glance, and neutron built into is_service_enabled().
 # Uses global ``ENABLED_SERVICES``
 # enable_service service [service ...]
 function enable_service() {
@@ -780,7 +780,7 @@ function enable_service() {
 #   disable_service rabbit
 #
 # This function does not know about the special cases
-# for nova, glance, and quantum built into is_service_enabled().
+# for nova, glance, and neutron built into is_service_enabled().
 # Uses global ``ENABLED_SERVICES``
 # disable_service service [service ...]
 function disable_service() {
@@ -913,13 +913,34 @@ function pip_install {
         PIP_MIRROR_OPT="--use-mirrors"
     fi
 
+    # pip < 1.4 has a bug where it will use an already existing build
+    # directory unconditionally.  Say an earlier component installs
+    # foo v1.1; pip will have built foo's source in
+    # /tmp/$USER-pip-build.  Even if a later component specifies foo <
+    # 1.1, the existing extracted build will be used and cause
+    # confusing errors.  By creating unique build directories we avoid
+    # this problem. See
+    #  https://github.com/pypa/pip/issues/709
+    local pip_build_tmp=$(mktemp --tmpdir -d pip-build.XXXXX)
+
     $SUDO_PIP PIP_DOWNLOAD_CACHE=${PIP_DOWNLOAD_CACHE:-/var/cache/pip} \
         HTTP_PROXY=$http_proxy \
         HTTPS_PROXY=$https_proxy \
         NO_PROXY=$no_proxy \
-        $CMD_PIP install $PIP_MIRROR_OPT $@
+        $CMD_PIP install --build=${pip_build_tmp} \
+        $PIP_MIRROR_OPT $@ \
+        && $SUDO_PIP rm -rf ${pip_build_tmp}
 }
 
+
+# Cleanup anything from /tmp on unstack
+# clean_tmp
+function cleanup_tmp {
+    local tmp_dir=${TMPDIR:-/tmp}
+
+    # see comments in pip_install
+    sudo rm -rf ${tmp_dir}/pip-build.*
+}
 
 # Service wrapper to restart services
 # restart_service service-name
@@ -1020,6 +1041,8 @@ function screen_rc {
         echo "sessionname $SCREEN_NAME" > $SCREENRC
         # Set a reasonable statusbar
         echo "hardstatus alwayslastline '$SCREEN_HARDSTATUS'" >> $SCREENRC
+        # Some distributions override PROMPT_COMMAND for the screen terminal type - turn that off
+        echo "setenv PROMPT_COMMAND /bin/true" >> $SCREENRC
         echo "screen -t shell bash" >> $SCREENRC
     fi
     # If this service doesn't already exist in the screenrc file
@@ -1085,12 +1108,13 @@ function setup_develop() {
     else
         SUDO_CMD="sudo"
     fi
+    for reqs_file in $1/requirements.txt $1/tools/pip-requires ; do
+        if [ -f $reqs_file ] ; then
+            pip_install -r $reqs_file
+        fi
+    done
     (cd $1; \
         python setup.py egg_info; \
-        raw_links=$(awk '/^.+/ {print "-f " $1}' *.egg-info/dependency_links.txt); \
-        depend_links=$(echo $raw_links | xargs); \
-        require_file=$([ ! -r *-info/requires.txt ] || echo "-r *-info/requires.txt"); \
-        pip_install $require_file $depend_links; \
         $SUDO_CMD \
             HTTP_PROXY=$http_proxy \
             HTTPS_PROXY=$https_proxy \
@@ -1328,8 +1352,8 @@ function zypper_install() {
 # Uses globals ``ENABLED_SERVICES``
 # ping_check from-net ip boot-timeout expected
 function ping_check() {
-    if is_service_enabled quantum; then
-        _ping_check_quantum  "$1" $2 $3 $4
+    if is_service_enabled neutron; then
+        _ping_check_neutron  "$1" $2 $3 $4
         return
     fi
     _ping_check_novanet "$1" $2 $3 $4
@@ -1368,8 +1392,8 @@ function _ping_check_novanet() {
 
 # ssh_check net-name key-file floating-ip default-user active-timeout
 function ssh_check() {
-    if is_service_enabled quantum; then
-        _ssh_check_quantum  "$1" $2 $3 $4 $5
+    if is_service_enabled neutron; then
+        _ssh_check_neutron  "$1" $2 $3 $4 $5
         return
     fi
     _ssh_check_novanet "$1" $2 $3 $4 $5

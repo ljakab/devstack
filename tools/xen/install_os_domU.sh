@@ -50,6 +50,15 @@ xe_min()
 
 cd $THIS_DIR
 
+# Die if multiple hosts listed
+if have_multiple_hosts; then
+    cat >&2 << EOF
+ERROR: multiple hosts found. This might mean that the XenServer is a member
+of a pool - Exiting.
+EOF
+    exit 1
+fi
+
 # Install plugins
 
 ## Nova plugins
@@ -58,8 +67,8 @@ install_xapi_plugins_from_zipball $NOVA_ZIPBALL_URL
 
 ## Install the netwrap xapi plugin to support agent control of dom0 networking
 if [[ "$ENABLED_SERVICES" =~ "q-agt" && "$Q_PLUGIN" = "openvswitch" ]]; then
-    QUANTUM_ZIPBALL_URL=${QUANTUM_ZIPBALL_URL:-$(zip_snapshot_location $QUANTUM_REPO $QUANTUM_BRANCH)}
-    install_xapi_plugins_from_zipball $QUANTUM_ZIPBALL_URL
+    NEUTRON_ZIPBALL_URL=${NEUTRON_ZIPBALL_URL:-$(zip_snapshot_location $NEUTRON_REPO $NEUTRON_BRANCH)}
+    install_xapi_plugins_from_zipball $NEUTRON_ZIPBALL_URL
 fi
 
 create_directory_for_kernels
@@ -72,9 +81,9 @@ setup_network "$VM_BRIDGE_OR_NET_NAME"
 setup_network "$MGT_BRIDGE_OR_NET_NAME"
 setup_network "$PUB_BRIDGE_OR_NET_NAME"
 
-# With quantum, one more network is required, which is internal to the
+# With neutron, one more network is required, which is internal to the
 # hypervisor, and used by the VMs
-if is_service_enabled quantum; then
+if is_service_enabled neutron; then
     setup_network "$XEN_INT_BRIDGE_OR_NET_NAME"
 fi
 
@@ -199,13 +208,11 @@ if [ -z "$templateuuid" ]; then
     # Update the template
     $THIS_DIR/scripts/install_ubuntu_template.sh $PRESEED_URL
 
-    # create a new VM with the given template
-    # creating the correct VIFs and metadata
+    # create a new VM from the given template with eth0 attached to the given
+    # network
     $THIS_DIR/scripts/install-os-vpx.sh \
         -t "$UBUNTU_INST_TEMPLATE_NAME" \
-        -v "$VM_BRIDGE_OR_NET_NAME" \
-        -m "$MGT_BRIDGE_OR_NET_NAME" \
-        -p "$PUB_BRIDGE_OR_NET_NAME" \
+        -n "$UBUNTU_INST_BRIDGE_OR_NET_NAME" \
         -l "$GUEST_NAME" \
         -r "$OSDOMU_MEM_MB"
 
@@ -255,10 +262,10 @@ add_interface "$GUEST_NAME" "$PUB_BRIDGE_OR_NET_NAME" "$PUB_DEV_NR"
 $THIS_DIR/build_xva.sh "$GUEST_NAME"
 
 # Attach a network interface for the integration network (so that the bridge
-# is created by XenServer). This is required for Quantum. Also pass that as a
+# is created by XenServer). This is required for Neutron. Also pass that as a
 # kernel parameter for DomU
-if is_service_enabled quantum; then
-    add_interface "$GUEST_NAME" "$XEN_INT_BRIDGE_OR_NET_NAME" $XEN_INT_DEV_NR
+if is_service_enabled neutron; then
+    attach_network "$XEN_INT_BRIDGE_OR_NET_NAME"
 
     XEN_INTEGRATION_BRIDGE=$(bridge_for "$XEN_INT_BRIDGE_OR_NET_NAME")
     append_kernel_cmdline \

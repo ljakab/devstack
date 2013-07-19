@@ -133,19 +133,6 @@ function configure_swift() {
         sudo sed -i '/disable *= *yes/ { s/yes/no/ }' /etc/xinetd.d/rsync
     fi
 
-    if is_service_enabled swift3;then
-        swift_auth_server="s3token "
-    fi
-
-    # By default Swift will be installed with the tempauth middleware
-    # which has some default username and password if you have
-    # configured keystone it will checkout the directory.
-    if is_service_enabled key; then
-        swift_auth_server+="authtoken keystoneauth"
-    else
-        swift_auth_server=tempauth
-    fi
-
     SWIFT_CONFIG_PROXY_SERVER=${SWIFT_CONF_DIR}/proxy-server.conf
     cp ${SWIFT_DIR}/etc/proxy-server.conf-sample ${SWIFT_CONFIG_PROXY_SERVER}
 
@@ -164,23 +151,21 @@ function configure_swift() {
     iniuncomment ${SWIFT_CONFIG_PROXY_SERVER} DEFAULT bind_port
     iniset ${SWIFT_CONFIG_PROXY_SERVER} DEFAULT bind_port ${SWIFT_DEFAULT_BIND_PORT:-8080}
 
-    # By default Swift will be installed with the tempauth middleware
-    # which has some default username and password if you have
-    # configured keystone it will configure swift with it.
-    if is_service_enabled key;then
-        if is_service_enabled swift3;then
-            swift_pipeline=" swift3 s3token "
-        fi
-        swift_pipeline+=" authtoken keystoneauth "
-    else
-        if is_service_enabled swift3;then
-            swift_pipeline=" swift3 "
-        fi
-        swift_pipeline+=" tempauth "
+    # By default Swift will be installed with keystone and tempauth middleware
+    # and add the swift3 middleware if its configured for it. The token for
+    # tempauth would be prefixed with the reseller_prefix setting TEMPAUTH_ the
+    # token for keystoneauth would have the standard reseller_prefix AUTH_
+    if is_service_enabled swift3;then
+        swift_pipeline=" swift3 s3token "
     fi
+    swift_pipeline+=" authtoken keystoneauth tempauth "
     sed -i "/^pipeline/ { s/tempauth/${swift_pipeline} ${SWIFT_EXTRAS_MIDDLEWARE}/ ;}" ${SWIFT_CONFIG_PROXY_SERVER}
 
+    iniuncomment ${SWIFT_CONFIG_PROXY_SERVER} filter:tempauth account_autocreate
     iniset ${SWIFT_CONFIG_PROXY_SERVER} app:proxy-server account_autocreate true
+
+    iniuncomment ${SWIFT_CONFIG_PROXY_SERVER} filter:tempauth reseller_prefix
+    iniset ${SWIFT_CONFIG_PROXY_SERVER} filter:tempauth reseller_prefix "TEMPAUTH"
 
     # Configure Keystone
     sed -i '/^# \[filter:authtoken\]/,/^# \[filter:keystoneauth\]$/ s/^#[ \t]*//' ${SWIFT_CONFIG_PROXY_SERVER}
@@ -223,6 +208,7 @@ EOF
         local swift_node_config=$1
         local node_id=$2
         local bind_port=$3
+        local server_type=$4
 
         log_facility=$[ node_id - 1 ]
         node_path=${SWIFT_DATA_DIR}/${node_number}
@@ -242,6 +228,9 @@ EOF
         iniuncomment ${swift_node_config} DEFAULT log_facility
         iniset ${swift_node_config} DEFAULT log_facility LOG_LOCAL${log_facility}
 
+        iniuncomment ${swift_node_config} DEFAULT disable_fallocate
+        iniset ${swift_node_config} DEFAULT disable_fallocate true
+
         iniuncomment ${swift_node_config} DEFAULT mount_check
         iniset ${swift_node_config} DEFAULT mount_check false
 
@@ -252,7 +241,7 @@ EOF
     for node_number in ${SWIFT_REPLICAS_SEQ}; do
         swift_node_config=${SWIFT_CONF_DIR}/object-server/${node_number}.conf
         cp ${SWIFT_DIR}/etc/object-server.conf-sample ${swift_node_config}
-        generate_swift_config ${swift_node_config} ${node_number} $[OBJECT_PORT_BASE + 10 * (node_number - 1)]
+        generate_swift_config ${swift_node_config} ${node_number} $[OBJECT_PORT_BASE + 10 * (node_number - 1)] object
         iniset ${swift_node_config} filter:recon recon_cache_path  ${SWIFT_DATA_DIR}/cache
         # Using a sed and not iniset/iniuncomment because we want to a global
         # modification and make sure it works for new sections.
@@ -260,16 +249,38 @@ EOF
 
         swift_node_config=${SWIFT_CONF_DIR}/container-server/${node_number}.conf
         cp ${SWIFT_DIR}/etc/container-server.conf-sample ${swift_node_config}
-        generate_swift_config ${swift_node_config} ${node_number} $[CONTAINER_PORT_BASE + 10 * (node_number - 1)]
+        generate_swift_config ${swift_node_config} ${node_number} $[CONTAINER_PORT_BASE + 10 * (node_number - 1)] container
         iniuncomment ${swift_node_config} app:container-server allow_versions
         iniset ${swift_node_config} app:container-server allow_versions  "true"
         sed -i -e "s,#[ ]*recon_cache_path .*,recon_cache_path = ${SWIFT_DATA_DIR}/cache," ${swift_node_config}
 
         swift_node_config=${SWIFT_CONF_DIR}/account-server/${node_number}.conf
         cp ${SWIFT_DIR}/etc/account-server.conf-sample ${swift_node_config}
-        generate_swift_config ${swift_node_config} ${node_number} $[ACCOUNT_PORT_BASE + 10 * (node_number - 1)]
+        generate_swift_config ${swift_node_config} ${node_number} $[ACCOUNT_PORT_BASE + 10 * (node_number - 1)] account
         sed -i -e "s,#[ ]*recon_cache_path .*,recon_cache_path = ${SWIFT_DATA_DIR}/cache," ${swift_node_config}
     done
+
+    # Set new accounts in tempauth to match keystone tenant/user (to make testing easier)
+    iniset ${SWIFT_CONFIG_PROXY_SERVER} filter:tempauth user_swifttenanttest1_swiftusertest1 "testing .admin"
+    iniset ${SWIFT_CONFIG_PROXY_SERVER} filter:tempauth user_swifttenanttest2_swiftusertest2 "testing2 .admin"
+    iniset ${SWIFT_CONFIG_PROXY_SERVER} filter:tempauth user_swifttenanttest1_swiftusertest3 "testing3 .admin"
+
+    testfile=${SWIFT_CONF_DIR}/test.conf
+    cp ${SWIFT_DIR}/test/sample.conf ${testfile}
+
+    # Set accounts for functional tests
+    iniset ${testfile} func_test account swifttenanttest1
+    iniset ${testfile} func_test username swiftusertest1
+    iniset ${testfile} func_test username3 swiftusertest3
+    iniset ${testfile} func_test account2 swifttenanttest2
+    iniset ${testfile} func_test username2 swiftusertest2
+
+    if is_service_enabled key;then
+        iniuncomment ${testfile} func_test auth_version
+        iniset ${testfile} func_test auth_host ${KEYSTONE_SERVICE_HOST}
+        iniset ${testfile} func_test auth_port ${KEYSTONE_AUTH_PORT}
+        iniset ${testfile} func_test auth_prefix /v2.0/
+    fi
 
     swift_log_dir=${SWIFT_DATA_DIR}/logs
     rm -rf ${swift_log_dir}
@@ -328,6 +339,50 @@ function create_swift_disk() {
         sudo install -o ${USER} -g $USER_GROUP -d $node_device
         sudo chown -R $USER: ${node}
     done
+}
+# create_swift_accounts() - Set up standard swift accounts and extra
+# one for tests we do this by attaching all words in the account name
+# since we want to make it compatible with tempauth which use
+# underscores for separators.
+
+# Tenant               User       Roles
+# ------------------------------------------------------------------
+# service            swift              service
+# swifttenanttest1   swiftusertest1     admin
+# swifttenanttest1   swiftusertest3     anotherrole
+# swifttenanttest2   swiftusertest2     admin
+
+function create_swift_accounts() {
+    KEYSTONE_CATALOG_BACKEND=${KEYSTONE_CATALOG_BACKEND:-sql}
+
+    SERVICE_TENANT=$(keystone tenant-list | awk "/ $SERVICE_TENANT_NAME / { print \$2 }")
+    ADMIN_ROLE=$(keystone role-list | awk "/ admin / { print \$2 }")
+
+    SWIFT_USER=$(keystone user-create --name=swift --pass="$SERVICE_PASSWORD" \
+        --tenant_id $SERVICE_TENANT --email=swift@example.com | grep " id " | get_field 2)
+    keystone user-role-add --tenant_id $SERVICE_TENANT --user_id $SWIFT_USER --role_id $ADMIN_ROLE
+
+    if [[ "$KEYSTONE_CATALOG_BACKEND" = 'sql' ]]; then
+        SWIFT_SERVICE=$(keystone service-create --name=swift --type="object-store" \
+            --description="Swift Service" | grep " id " | get_field 2)
+        keystone endpoint-create \
+            --region RegionOne \
+            --service_id $SWIFT_SERVICE \
+            --publicurl "http://$SERVICE_HOST:8080/v1/AUTH_\$(tenant_id)s" \
+            --adminurl "http://$SERVICE_HOST:8080" \
+            --internalurl "http://$SERVICE_HOST:8080/v1/AUTH_\$(tenant_id)s"
+    fi
+
+    SWIFT_TENANT_TEST1=$(keystone tenant-create --name=swifttenanttest1 | grep " id " | get_field 2)
+    SWIFT_USER_TEST1=$(keystone user-create --name=swiftusertest1 --pass=testing --email=test@example.com | grep " id " | get_field 2)
+    keystone user-role-add --user_id $SWIFT_USER_TEST1 --role_id $ADMIN_ROLE --tenant_id $SWIFT_TENANT_TEST1
+
+    SWIFT_USER_TEST3=$(keystone user-create --name=swiftusertest3 --pass=testing3 --email=test3@example.com | grep " id " | get_field 2)
+    keystone user-role-add --user_id $SWIFT_USER_TEST3 --role_id $ANOTHER_ROLE --tenant_id $SWIFT_TENANT_TEST1
+
+    SWIFT_TENANT_TEST2=$(keystone tenant-create --name=swifttenanttest2 | grep " id " | get_field 2)
+    SWIFT_USER_TEST2=$(keystone user-create --name=swiftusertest2 --pass=testing2 --email=test2@example.com | grep " id " | get_field 2)
+    keystone user-role-add --user_id $SWIFT_USER_TEST2 --role_id $ADMIN_ROLE --tenant_id $SWIFT_TENANT_TEST2
 }
 
 # init_swift() - Initialize rings

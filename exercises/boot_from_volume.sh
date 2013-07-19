@@ -11,7 +11,7 @@ echo "Begin DevStack Exercise: $0"
 echo "*********************************************************************"
 
 # This script exits on an error so that errors don't compound and you see
-# only the first error that occured.
+# only the first error that occurred.
 set -o errexit
 
 # Print the commands being run so that we can see the command that triggers
@@ -32,9 +32,9 @@ source $TOP_DIR/functions
 # Import configuration
 source $TOP_DIR/openrc
 
-# Import quantum functions if needed
-if is_service_enabled quantum; then
-    source $TOP_DIR/lib/quantum
+# Import neutron functions if needed
+if is_service_enabled neutron; then
+    source $TOP_DIR/lib/neutron
 fi
 
 # Import exercise configuration
