@@ -1,0 +1,73 @@
+# Neutron OpenDaylight plugin
+# ------------------
+
+# Save trace setting
+MY_XTRACE=$(set +o | grep xtrace)
+set +o xtrace
+
+source $TOP_DIR/lib/neutron_plugins/ovs_base
+source $TOP_DIR/lib/neutron_thirdparty/odl	# for configuration value
+
+function neutron_plugin_create_nova_conf() {
+    _neutron_ovs_base_configure_nova_vif_driver
+    iniset $NOVA_CONF DEFAULT libvirt_ovs_integration_bridge "$OVS_BRIDGE"
+}
+
+function neutron_plugin_install_agent_packages() {
+    _neutron_ovs_base_install_agent_packages
+}
+
+function neutron_plugin_configure_common() {
+    Q_PLUGIN_CONF_PATH=etc/neutron/plugins/opendaylight
+    Q_PLUGIN_CONF_FILENAME=odl_neutron_plugin.ini
+    Q_DB_NAME="odl_neutron"
+    Q_PLUGIN_CLASS="neutron.plugins.opendaylight.odl_neutron_plugin.ODLNeutronPlugin"
+}
+
+function neutron_plugin_configure_debug_command() {
+    _neutron_ovs_base_configure_debug_command
+}
+
+function neutron_plugin_configure_dhcp_agent() {
+    :
+}
+
+function neutron_plugin_configure_l3_agent() {
+    _neutron_ovs_base_configure_l3_agent
+}
+
+function neutron_plugin_configure_plugin_agent() {
+    # Set up integration bridge
+    OVS_BRIDGE=${OVS_BRIDGE:-br-int}
+    _neutron_ovs_base_setup_bridge $OVS_BRIDGE
+    iniset /$Q_PLUGIN_CONF_FILE ODL controllers $ODL_CONTROLLERS
+    iniset /$Q_PLUGIN_CONF_FILE ODL integration_bridge $OVS_BRIDGE
+    iniset /$Q_PLUGIN_CONF_FILE ODL tunnel_bridge $ODL_TUNNEL_BRIDGE
+    iniset /$Q_PLUGIN_CONF_FILE ODL tenant_network_type $ODL_TENANT_NETWORK_TYPE
+    iniset /$Q_PLUGIN_CONF_FILE ODL int_peer_patch_port $ODL_INT_PEER_PATCH_PORT
+    iniset /$Q_PLUGIN_CONF_FILE ODL tun_peer_patch_port $ODL_TUN_PEER_PATCH_PORT
+    iniset /$Q_PLUGIN_CONF_FILE ODL tunnel_id_ranges $ODL_TUN_ID_RANGE
+    iniset /$Q_PLUGIN_CONF_FILE ODL network_vlan_ranges $ODL_NETWORK_VLAN_RANGE
+
+    AGENT_BINARY="$QUANTUM_DIR/neutron/plugins/opendaylight/agent/odl_neutron_agent.py"
+
+    _neutron_ovs_base_configure_firewall_driver
+}
+
+function neutron_plugin_configure_service() {
+    :
+}
+
+function neutron_plugin_setup_interface_driver() {
+    local conf_file=$1
+    iniset $conf_file DEFAULT interface_driver neutron.agent.linux.interface.OVSInterfaceDriver
+    iniset $conf_file DEFAULT ovs_use_veth True
+}
+
+function has_neutron_plugin_security_group() {
+    # 0 means True here
+    return 0
+}
+
+# Restore xtrace
+$MY_XTRACE
