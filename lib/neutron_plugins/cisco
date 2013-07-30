@@ -314,7 +314,7 @@ function neutron_plugin_create_nova_conf() {
     if _has_ovs_subplugin; then
         ovs_neutron_plugin_create_nova_conf
     else
-        NOVA_VIF_DRIVER=${NOVA_VIF_DRIVER:-"nova.virt.libvirt.vif.LibvirtHybridOVSBridgeDriver"}
+        NOVA_VIF_DRIVER=${NOVA_VIF_DRIVER:-"nova.virt.libvirt.vif.LibvirtGenericVIFDriver"}
     fi
 }
 
@@ -566,9 +566,6 @@ function _configure_vsm() {
 	expect -re ".*# "
 
 	send "feature network-segmentation-manager\n" 
-	expect -re ".*# "
-
-	send "fabric-network test\n" 
 	expect -re ".*# "
 
         send "exit\n"
