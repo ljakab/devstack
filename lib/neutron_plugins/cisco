@@ -646,6 +646,8 @@ function _create_devstack_vsm() {
         if [[ "$matched" == "0" ]]; then
             recreate=yes
         fi
+    else 
+        recreate=yes
     fi
 
     # In case of restart or recreate, kill the console and destroy the VM
