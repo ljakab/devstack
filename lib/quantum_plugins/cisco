@@ -1084,6 +1084,14 @@ function _configure_n1kv_subplugin() {
 function quantum_plugin_configure_plugin_agent() {
     if _has_ovs_subplugin; then
         ovs_quantum_plugin_configure_plugin_agent
+    else
+        if _has_n1kv_subplugin; then
+            OVS_BRIDGE=$Q_CISCO_PLUGIN_INTEGRATION_BRIDGE
+            _quantum_ovs_base_setup_bridge $OVS_BRIDGE
+            # Assuming q-agt will be enabled on all the compute nodes
+            # uVEM is only configured/installed with q-agt enabled
+            _configure_uvem
+        fi
     fi
 }
 
