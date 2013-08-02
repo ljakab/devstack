@@ -30,9 +30,15 @@ function install_odl() {
         yum_install maven java-1.7.0-openjdk
     fi
 
+    git_clone $OVSDB_REPO $ODL_DIR $OVSDB_BRANCH
+    cd $ODL_DIR/ovsdb/ovsdb/
+    mvn clean install
     git_clone $ODL_REPO $ODL_DIR $ODL_BRANCH
     cd $ODL_DIR/opendaylight/distribution/opendaylight/
     mvn clean install
+
+    # Copy OVSDB over now
+    cp $ODL_DIR/ovsdb/ovsdb/target/ovsdb-0.4.0-SNAPSHOT.jar $ODL_DIR/opendaylight/distribution/opendaylight/target/distribution.opendaylight-0.1.0-SNAPSHOT-osgipackage/opendaylight/plugins/
     cd $_pwd
 }
 

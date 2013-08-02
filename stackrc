@@ -158,6 +158,8 @@ TEMPEST_BRANCH=${TEMPEST_BRANCH:-master}
 # OpenDaylight
 ODL_REPO=${ODL_REPO:-http://git.opendaylight.org/gerrit/p/controller.git}
 ODL_BRANCH=${ODL_BRANCH:-master}
+OVSDB_REPO=${OVSDB_REPO:-http://git.opendaylight.org/gerrit/p/ovsdb.git}
+OVSDB_BRANCH=${OVSDB_BRANCH:-master}
 
 # diskimage-builder
 BM_IMAGE_BUILD_REPO=${BM_IMAGE_BUILD_REPO:-${GIT_BASE}/stackforge/diskimage-builder.git}
