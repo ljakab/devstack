@@ -298,7 +298,10 @@ SERVICE_TIMEOUT=${SERVICE_TIMEOUT:-60}
 # ==================
 
 # Source project function libraries
+source $TOP_DIR/lib/apache
 source $TOP_DIR/lib/tls
+source $TOP_DIR/lib/infra
+source $TOP_DIR/lib/oslo
 source $TOP_DIR/lib/horizon
 source $TOP_DIR/lib/keystone
 source $TOP_DIR/lib/glance
@@ -313,8 +316,6 @@ source $TOP_DIR/lib/ldap
 
 # Set the destination directories for other OpenStack projects
 OPENSTACKCLIENT_DIR=$DEST/python-openstackclient
-PBR_DIR=$DEST/pbr
-
 
 # Interactive Configuration
 # -------------------------
@@ -587,6 +588,8 @@ if is_service_enabled neutron; then
     install_neutron_agent_packages
 fi
 
+# Unbreak the giant mess that is the current state of setuptools
+unfubar_setuptools
 
 # System-specific preconfigure
 # ============================
@@ -657,20 +660,25 @@ fi
 
 echo_summary "Installing OpenStack project source"
 
-# Install pbr
-git_clone $PBR_REPO $PBR_DIR $PBR_BRANCH
-setup_develop $PBR_DIR
+# Install required infra support libraries
+install_infra
+
+# Install oslo libraries that have graduated
+install_oslo
 
 # Install clients libraries
 install_keystoneclient
 install_glanceclient
 install_cinderclient
 install_novaclient
-if is_service_enabled swift glance; then
+if is_service_enabled swift glance horizon; then
     install_swiftclient
 fi
-if is_service_enabled neutron nova; then
+if is_service_enabled neutron nova horizon; then
     install_neutronclient
+fi
+if is_service_enabled heat horizon; then
+    install_heatclient
 fi
 
 git_clone $OPENSTACKCLIENT_REPO $OPENSTACKCLIENT_DIR $OPENSTACKCLIENT_BRANCH
@@ -736,14 +744,15 @@ fi
 if is_service_enabled ceilometer; then
     install_ceilometerclient
     install_ceilometer
+    echo_summary "Configuring Ceilometer"
+    configure_ceilometer
+    configure_ceilometerclient
 fi
 
 if is_service_enabled heat; then
     install_heat
-    install_heatclient
     cleanup_heat
     configure_heat
-    configure_heatclient
 fi
 
 if is_service_enabled tls-proxy; then
@@ -836,7 +845,7 @@ fi
 # Clear screen rc file
 SCREENRC=$TOP_DIR/$SCREEN_NAME-screenrc
 if [[ -e $SCREENRC ]]; then
-    echo -n > $SCREENRC
+    rm -f $SCREENRC
 fi
 
 # Initialize the directory for service status check
@@ -1045,6 +1054,11 @@ if is_service_enabled nova; then
         iniset $NOVA_CONF baremetal driver $BM_DRIVER
         iniset $NOVA_CONF baremetal power_manager $BM_POWER_MANAGER
         iniset $NOVA_CONF baremetal tftp_root /tftpboot
+        if [[ "$BM_DNSMASQ_FROM_NOVA_NETWORK" = "True" ]]; then
+            BM_DNSMASQ_CONF=$NOVA_CONF_DIR/dnsmasq-for-baremetal-from-nova-network.conf
+            sudo cp "$FILES/dnsmasq-for-baremetal-from-nova-network.conf" "$BM_DNSMASQ_CONF"
+            iniset $NOVA_CONF DEFAULT dnsmasq_config_file "$BM_DNSMASQ_CONF"
+        fi
 
         # Define extra baremetal nova conf flags by defining the array ``EXTRA_BAREMETAL_OPTS``.
         for I in "${EXTRA_BAREMETAL_OPTS[@]}"; do
@@ -1080,10 +1094,10 @@ if is_service_enabled nova; then
         echo_summary "Using VMware vCenter driver"
         iniset $NOVA_CONF DEFAULT compute_driver "vmwareapi.VMwareVCDriver"
         VMWAREAPI_USER=${VMWAREAPI_USER:-"root"}
-        iniset $NOVA_CONF DEFAULT vmwareapi_host_ip "$VMWAREAPI_IP"
-        iniset $NOVA_CONF DEFAULT vmwareapi_host_username "$VMWAREAPI_USER"
-        iniset $NOVA_CONF DEFAULT vmwareapi_host_password "$VMWAREAPI_PASSWORD"
-        iniset $NOVA_CONF DEFAULT vmwareapi_cluster_name "$VMWAREAPI_CLUSTER"
+        iniset $NOVA_CONF vmware host_ip "$VMWAREAPI_IP"
+        iniset $NOVA_CONF vmware host_username "$VMWAREAPI_USER"
+        iniset $NOVA_CONF vmware host_password "$VMWAREAPI_PASSWORD"
+        iniset $NOVA_CONF vmware cluster_name "$VMWAREAPI_CLUSTER"
         if is_service_enabled neutron; then
             iniset $NOVA_CONF vmware integration_bridge $OVS_BRIDGE
         fi
@@ -1211,9 +1225,6 @@ if is_service_enabled cinder; then
     start_cinder
 fi
 if is_service_enabled ceilometer; then
-    echo_summary "Configuring Ceilometer"
-    configure_ceilometer
-    configure_ceilometerclient
     echo_summary "Starting Ceilometer"
     init_ceilometer
     start_ceilometer
@@ -1293,15 +1304,16 @@ if is_service_enabled nova && is_baremetal; then
        create_baremetal_flavor $BM_DEPLOY_KERNEL_ID $BM_DEPLOY_RAMDISK_ID
 
     # otherwise user can manually add it later by calling nova-baremetal-manage
-    # otherwise user can manually add it later by calling nova-baremetal-manage
     [[ -n "$BM_FIRST_MAC" ]] && add_baremetal_node
 
-    # NOTE: we do this here to ensure that our copy of dnsmasq is running
-    sudo pkill dnsmasq || true
-    sudo dnsmasq --conf-file= --port=0 --enable-tftp --tftp-root=/tftpboot \
-        --dhcp-boot=pxelinux.0 --bind-interfaces --pid-file=/var/run/dnsmasq.pid \
-        --interface=$BM_DNSMASQ_IFACE --dhcp-range=$BM_DNSMASQ_RANGE \
-        ${BM_DNSMASQ_DNS:+--dhcp-option=option:dns-server,$BM_DNSMASQ_DNS}
+    if [[ "$BM_DNSMASQ_FROM_NOVA_NETWORK" = "False" ]]; then
+        # NOTE: we do this here to ensure that our copy of dnsmasq is running
+        sudo pkill dnsmasq || true
+        sudo dnsmasq --conf-file= --port=0 --enable-tftp --tftp-root=/tftpboot \
+            --dhcp-boot=pxelinux.0 --bind-interfaces --pid-file=/var/run/dnsmasq.pid \
+            --interface=$BM_DNSMASQ_IFACE --dhcp-range=$BM_DNSMASQ_RANGE \
+            ${BM_DNSMASQ_DNS:+--dhcp-option=option:dns-server,$BM_DNSMASQ_DNS}
+    fi
     # ensure callback daemon is running
     sudo pkill nova-baremetal-deploy-helper || true
     screen_it baremetal "nova-baremetal-deploy-helper"
