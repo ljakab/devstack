@@ -49,7 +49,7 @@ function neutron_plugin_configure_plugin_agent() {
     iniset /$Q_PLUGIN_CONF_FILE ODL tunnel_id_ranges $ODL_TUN_ID_RANGE
     iniset /$Q_PLUGIN_CONF_FILE ODL network_vlan_ranges $ODL_NETWORK_VLAN_RANGE
 
-    AGENT_BINARY="$QUANTUM_DIR/neutron/plugins/opendaylight/agent/odl_neutron_agent.py"
+    AGENT_BINARY="$NEUTRON_DIR/neutron/plugins/opendaylight/agent/odl_neutron_agent.py"
 
     _neutron_ovs_base_configure_firewall_driver
 }
