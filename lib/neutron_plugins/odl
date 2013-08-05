@@ -40,14 +40,15 @@ function neutron_plugin_configure_plugin_agent() {
     # Set up integration bridge
     OVS_BRIDGE=${OVS_BRIDGE:-br-int}
     _neutron_ovs_base_setup_bridge $OVS_BRIDGE
-    iniset /$Q_PLUGIN_CONF_FILE ODL controllers $ODL_CONTROLLERS
-    iniset /$Q_PLUGIN_CONF_FILE ODL integration_bridge $OVS_BRIDGE
-    iniset /$Q_PLUGIN_CONF_FILE ODL tunnel_bridge $ODL_TUNNEL_BRIDGE
-    iniset /$Q_PLUGIN_CONF_FILE ODL tenant_network_type $ODL_TENANT_NETWORK_TYPE
-    iniset /$Q_PLUGIN_CONF_FILE ODL int_peer_patch_port $ODL_INT_PEER_PATCH_PORT
-    iniset /$Q_PLUGIN_CONF_FILE ODL tun_peer_patch_port $ODL_TUN_PEER_PATCH_PORT
-    iniset /$Q_PLUGIN_CONF_FILE ODL tunnel_id_ranges $ODL_TUN_ID_RANGE
-    iniset /$Q_PLUGIN_CONF_FILE ODL network_vlan_ranges $ODL_NETWORK_VLAN_RANGE
+    iniset /$Q_PLUGIN_CONF_FILE odl controllers $ODL_CONTROLLERS
+    iniset /$Q_PLUGIN_CONF_FILE odl integration_bridge $OVS_BRIDGE
+    iniset /$Q_PLUGIN_CONF_FILE odl tunnel_bridge $ODL_TUNNEL_BRIDGE
+    iniset /$Q_PLUGIN_CONF_FILE odl tenant_network_type $ODL_TENANT_NETWORK_TYPE
+    iniset /$Q_PLUGIN_CONF_FILE odl int_peer_patch_port $ODL_INT_PEER_PATCH_PORT
+    iniset /$Q_PLUGIN_CONF_FILE odl tun_peer_patch_port $ODL_TUN_PEER_PATCH_PORT
+    iniset /$Q_PLUGIN_CONF_FILE odl tunnel_id_ranges $ODL_TUN_ID_RANGE
+    iniset /$Q_PLUGIN_CONF_FILE odl network_vlan_ranges $ODL_NETWORK_VLAN_RANGE
+    iniset /$Q_PLUGIN_CONF_FILE odl nodes $ODL_COMPUTE_NODES
 
     AGENT_BINARY="$NEUTRON_DIR/neutron/plugins/opendaylight/agent/odl_neutron_agent.py"
 
