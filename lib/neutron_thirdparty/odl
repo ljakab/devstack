@@ -32,14 +32,14 @@ function install_odl() {
     fi
 
     git_clone $OVSDB_REPO $OVSDB_DIR $OVSDB_BRANCH
-    cd $OVSDB_DIR/ovsdb/ovsdb/
+    cd $OVSDB_DIR/ovsdb/
     mvn clean install
     git_clone $ODL_REPO $ODL_DIR $ODL_BRANCH
     cd $ODL_DIR/opendaylight/distribution/opendaylight/
     mvn clean install
 
     # Copy OVSDB over now
-    cp $OVSDB_DIR/ovsdb/ovsdb/target/ovsdb-0.4.0-SNAPSHOT.jar $ODL_DIR/opendaylight/distribution/opendaylight/target/distribution.opendaylight-0.1.0-SNAPSHOT-osgipackage/opendaylight/plugins/
+    cp $OVSDB_DIR/ovsdb/target/ovsdb-0.4.0-SNAPSHOT.jar $ODL_DIR/opendaylight/distribution/opendaylight/target/distribution.opendaylight-0.1.0-SNAPSHOT-osgipackage/opendaylight/plugins/
     cd $_pwd
 }
 
