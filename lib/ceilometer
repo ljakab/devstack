@@ -1,8 +1,11 @@
 # lib/ceilometer
 # Install and start **Ceilometer** service
 
-# To enable Ceilometer services, add the following to localrc
-# enable_service ceilometer-acompute ceilometer-acentral ceilometer-collector ceilometer-api
+# To enable a minimal set of Ceilometer services, add the following to localrc:
+#   enable_service ceilometer-acompute ceilometer-acentral ceilometer-collector ceilometer-api
+#
+# To ensure Ceilometer alarming services are enabled also, further add to the localrc:
+#   enable_service ceilometer-alarm-notify ceilometer-alarm-eval
 
 # Dependencies:
 # - functions
@@ -37,12 +40,10 @@ CEILOMETER_API_LOG_DIR=/var/log/ceilometer-api
 CEILOMETER_AUTH_CACHE_DIR=${CEILOMETER_AUTH_CACHE_DIR:-/var/cache/ceilometer}
 
 # Support potential entry-points console scripts
-if [[ -d $CEILOMETER_DIR/bin ]]; then
-    CEILOMETER_BIN_DIR=$CEILOMETER_DIR/bin
-else
-    CEILOMETER_BIN_DIR=$(get_python_exec_prefix)
-fi
+CEILOMETER_BIN_DIR=$(get_python_exec_prefix)
 
+# Set up database backend
+CEILOMETER_BACKEND=${CEILOMETER_BACKEND:-mongodb}
 
 # Functions
 # ---------
@@ -83,7 +84,6 @@ function configure_ceilometer() {
     iniset $CEILOMETER_CONF DEFAULT os_username ceilometer
     iniset $CEILOMETER_CONF DEFAULT os_password $SERVICE_PASSWORD
     iniset $CEILOMETER_CONF DEFAULT os_tenant_name $SERVICE_TENANT_NAME
-    iniset $CEILOMETER_CONF DEFAULT os_auth_url $OS_AUTH_URL
 
     iniset $CEILOMETER_CONF keystone_authtoken auth_protocol http
     iniset $CEILOMETER_CONF keystone_authtoken admin_user ceilometer
@@ -91,11 +91,13 @@ function configure_ceilometer() {
     iniset $CEILOMETER_CONF keystone_authtoken admin_tenant_name $SERVICE_TENANT_NAME
     iniset $CEILOMETER_CONF keystone_authtoken signing_dir $CEILOMETER_AUTH_CACHE_DIR
 
-    iniset $CEILOMETER_CONF database connection mongodb://localhost:27017/ceilometer
-
-    configure_mongodb
-
-    cleanup_ceilometer
+    if [[ "$CEILOMETER_BACKEND" = 'mysql' ]]; then
+        iniset $CEILOMETER_CONF database connection `database_connection_url ceilometer`
+    else
+        iniset $CEILOMETER_CONF database connection mongodb://localhost:27017/ceilometer
+        configure_mongodb
+        cleanup_ceilometer
+    fi
 }
 
 function configure_mongodb() {
@@ -113,6 +115,11 @@ function init_ceilometer() {
     sudo mkdir -p $CEILOMETER_AUTH_CACHE_DIR
     sudo chown $STACK_USER $CEILOMETER_AUTH_CACHE_DIR
     rm -f $CEILOMETER_AUTH_CACHE_DIR/*
+
+    if [[ "$CEILOMETER_BACKEND" = 'mysql' ]]; then
+        recreate_database ceilometer utf8
+        $CEILOMETER_BIN_DIR/ceilometer-dbsync
+    fi
 }
 
 # install_ceilometer() - Collect source and prepare
@@ -131,12 +138,14 @@ function start_ceilometer() {
     screen_it ceilometer-acentral "ceilometer-agent-central --config-file $CEILOMETER_CONF"
     screen_it ceilometer-collector "ceilometer-collector --config-file $CEILOMETER_CONF"
     screen_it ceilometer-api "ceilometer-api -d -v --log-dir=$CEILOMETER_API_LOG_DIR --config-file $CEILOMETER_CONF"
+    screen_it ceilometer-alarm-notify "ceilometer-alarm-notifier --config-file $CEILOMETER_CONF"
+    screen_it ceilometer-alarm-eval "ceilometer-alarm-singleton --config-file $CEILOMETER_CONF"
 }
 
 # stop_ceilometer() - Stop running processes
 function stop_ceilometer() {
     # Kill the ceilometer screen windows
-    for serv in ceilometer-acompute ceilometer-acentral ceilometer-collector ceilometer-api; do
+    for serv in ceilometer-acompute ceilometer-acentral ceilometer-collector ceilometer-api ceilometer-alarm-notify ceilometer-alarm-eval; do
         screen -S $SCREEN_NAME -p $serv -X kill
     done
 }

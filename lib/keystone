@@ -132,6 +132,11 @@ function configure_keystone() {
 
     iniset $KEYSTONE_CONF DEFAULT admin_token "$SERVICE_TOKEN"
     iniset $KEYSTONE_CONF signing token_format "$KEYSTONE_TOKEN_FORMAT"
+
+    if [[ "$KEYSTONE_TOKEN_FORMAT" = "UUID" ]]; then
+        iniset $KEYSTONE_CONF token provider keystone.token.providers.uuid.Provider
+    fi
+
     iniset $KEYSTONE_CONF sql connection `database_connection_url keystone`
     iniset $KEYSTONE_CONF ec2 driver "keystone.contrib.ec2.backends.sql.Ec2"
 
@@ -212,9 +217,9 @@ create_keystone_accounts() {
         --name admin \
         | grep " id " | get_field 2)
     keystone user-role-add \
-        --user_id $ADMIN_USER \
-        --role_id $ADMIN_ROLE \
-        --tenant_id $ADMIN_TENANT
+        --user-id $ADMIN_USER \
+        --role-id $ADMIN_ROLE \
+        --tenant-id $ADMIN_TENANT
 
     # service
     SERVICE_TENANT=$(keystone tenant-create \
@@ -239,10 +244,10 @@ create_keystone_accounts() {
         --pass "$ADMIN_PASSWORD" \
         --email demo@example.com \
         | grep " id " | get_field 2)
-    keystone user-role-add --user_id $DEMO_USER --role_id $MEMBER_ROLE --tenant_id $DEMO_TENANT
-    keystone user-role-add --user_id $ADMIN_USER --role_id $ADMIN_ROLE --tenant_id $DEMO_TENANT
-    keystone user-role-add --user_id $DEMO_USER --role_id $ANOTHER_ROLE --tenant_id $DEMO_TENANT
-    keystone user-role-add --user_id $DEMO_USER --role_id $MEMBER_ROLE --tenant_id $INVIS_TENANT
+    keystone user-role-add --user-id $DEMO_USER --role-id $MEMBER_ROLE --tenant-id $DEMO_TENANT
+    keystone user-role-add --user-id $ADMIN_USER --role-id $ADMIN_ROLE --tenant-id $DEMO_TENANT
+    keystone user-role-add --user-id $DEMO_USER --role-id $ANOTHER_ROLE --tenant-id $DEMO_TENANT
+    keystone user-role-add --user-id $DEMO_USER --role-id $MEMBER_ROLE --tenant-id $INVIS_TENANT
 
     # Keystone
     if [[ "$KEYSTONE_CATALOG_BACKEND" = 'sql' ]]; then
@@ -284,6 +289,7 @@ function init_keystone() {
 function install_keystoneclient() {
     git_clone $KEYSTONECLIENT_REPO $KEYSTONECLIENT_DIR $KEYSTONECLIENT_BRANCH
     setup_develop $KEYSTONECLIENT_DIR
+    sudo install -D -m 0644 -o $STACK_USER {$KEYSTONECLIENT_DIR/tools/,/etc/bash_completion.d/}keystone.bash_completion
 }
 
 # install_keystone() - Collect source and prepare

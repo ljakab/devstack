@@ -42,6 +42,9 @@ source $TOP_DIR/exerciserc
 # exercise is skipped.
 is_service_enabled cinder || exit 55
 
+# Also skip if the hypervisor is Docker
+[[ "$VIRT_DRIVER" == "docker" ]] && exit 55
+
 # Instance type to create
 DEFAULT_INSTANCE_TYPE=${DEFAULT_INSTANCE_TYPE:-m1.tiny}
 
@@ -78,12 +81,18 @@ die_if_not_set $LINENO IMAGE "Failure getting image $DEFAULT_IMAGE_NAME"
 # List security groups
 nova secgroup-list
 
-# Create a secgroup
-if ! nova secgroup-list | grep -q $SECGROUP; then
-    nova secgroup-create $SECGROUP "$SECGROUP description"
-    if ! timeout $ASSOCIATE_TIMEOUT sh -c "while ! nova secgroup-list | grep -q $SECGROUP; do sleep 1; done"; then
-        echo "Security group not created"
-        exit 1
+if is_service_enabled n-cell; then
+    # Cells does not support security groups, so force the use of "default"
+    SECGROUP="default"
+    echo "Using the default security group because of Cells."
+else
+    # Create a secgroup
+    if ! nova secgroup-list | grep -q $SECGROUP; then
+        nova secgroup-create $SECGROUP "$SECGROUP description"
+        if ! timeout $ASSOCIATE_TIMEOUT sh -c "while ! nova secgroup-list | grep -q $SECGROUP; do sleep 1; done"; then
+            echo "Security group not created"
+            exit 1
+        fi
     fi
 fi
 
@@ -129,7 +138,8 @@ if ! timeout $ACTIVE_TIMEOUT sh -c "while ! nova show $VM_UUID | grep status | g
 fi
 
 # Get the instance IP
-IP=$(nova show $VM_UUID | grep "$PRIVATE_NETWORK_NAME" | get_field 2)
+IP=$(get_instance_ip $VM_UUID $PRIVATE_NETWORK_NAME)
+
 die_if_not_set $LINENO IP "Failure retrieving IP address"
 
 # Private IPs can be pinged in single node deployments
@@ -201,8 +211,12 @@ if ! timeout $TERMINATE_TIMEOUT sh -c "while nova list | grep -q $VM_UUID; do sl
     die $LINENO "Server $VM_NAME not deleted"
 fi
 
-# Delete secgroup
-nova secgroup-delete $SECGROUP || die $LINENO "Failure deleting security group $SECGROUP"
+if [[ $SECGROUP = "default" ]] ; then
+    echo "Skipping deleting default security group"
+else
+    # Delete secgroup
+    nova secgroup-delete $SECGROUP || die $LINENO "Failure deleting security group $SECGROUP"
+fi
 
 set +o xtrace
 echo "*********************************************************************"

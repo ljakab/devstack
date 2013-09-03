@@ -234,8 +234,10 @@ else
 fi
 
 # Create the destination directory and ensure it is writable by the user
+# and read/executable by everybody for daemons (e.g. apache run for horizon)
 sudo mkdir -p $DEST
 sudo chown -R $STACK_USER $DEST
+chmod 0755 $DEST
 
 # a basic test for $DEST path permissions (fatal on error unless skipped)
 check_path_perm_sanity ${DEST}
@@ -249,6 +251,9 @@ OFFLINE=`trueorfalse False $OFFLINE`
 # the destination git repository does not exist during the ``git_clone``
 # operation.
 ERROR_ON_CLONE=`trueorfalse False $ERROR_ON_CLONE`
+
+# Whether to enable the debug log level in OpenStack services
+ENABLE_DEBUG_LOG_LEVEL=`trueorfalse True $ENABLE_DEBUG_LOG_LEVEL`
 
 # Destination path for service data
 DATA_DIR=${DATA_DIR:-${DEST}/data}
@@ -298,7 +303,10 @@ SERVICE_TIMEOUT=${SERVICE_TIMEOUT:-60}
 # ==================
 
 # Source project function libraries
+source $TOP_DIR/lib/apache
 source $TOP_DIR/lib/tls
+source $TOP_DIR/lib/infra
+source $TOP_DIR/lib/oslo
 source $TOP_DIR/lib/horizon
 source $TOP_DIR/lib/keystone
 source $TOP_DIR/lib/glance
@@ -310,11 +318,17 @@ source $TOP_DIR/lib/heat
 source $TOP_DIR/lib/neutron
 source $TOP_DIR/lib/baremetal
 source $TOP_DIR/lib/ldap
+source $TOP_DIR/lib/ironic
+
+# Look for Nova hypervisor plugin
+NOVA_PLUGINS=$TOP_DIR/lib/nova_plugins
+if is_service_enabled nova && [[ -r $NOVA_PLUGINS/hypervisor-$VIRT_DRIVER ]]; then
+    # Load plugin
+    source $NOVA_PLUGINS/hypervisor-$VIRT_DRIVER
+fi
 
 # Set the destination directories for other OpenStack projects
 OPENSTACKCLIENT_DIR=$DEST/python-openstackclient
-PBR_DIR=$DEST/pbr
-
 
 # Interactive Configuration
 # -------------------------
@@ -577,6 +591,12 @@ set -o xtrace
 echo_summary "Installing package prerequisites"
 source $TOP_DIR/tools/install_prereqs.sh
 
+# Configure an appropriate python environment
+$TOP_DIR/tools/install_pip.sh
+
+# Do the ugly hacks for borken packages and distros
+$TOP_DIR/tools/fixup_stuff.sh
+
 install_rpc_backend
 
 if is_service_enabled $DATABASE_BACKENDS; then
@@ -587,64 +607,12 @@ if is_service_enabled neutron; then
     install_neutron_agent_packages
 fi
 
-
-# System-specific preconfigure
-# ============================
-
-if [[ is_fedora && $DISTRO =~ (rhel6) ]]; then
-    # Disable selinux to avoid configuring to allow Apache access
-    # to Horizon files or run nodejs (LP#1175444)
-    if selinuxenabled; then
-        sudo setenforce 0
-    fi
-
-    # An old version of ``python-crypto`` (2.0.1) may be installed on a
-    # fresh system via Anaconda and the dependency chain
-    # ``cas`` -> ``python-paramiko`` -> ``python-crypto``.
-    # ``pip uninstall pycrypto`` will remove the packaged ``.egg-info`` file
-    # but leave most of the actual library files behind in ``/usr/lib64/python2.6/Crypto``.
-    # Later ``pip install pycrypto`` will install over the packaged files resulting
-    # in a useless mess of old, rpm-packaged files and pip-installed files.
-    # Remove the package so that ``pip install python-crypto`` installs cleanly.
-    # Note: other RPM packages may require ``python-crypto`` as well.  For example,
-    # RHEL6 does not install ``python-paramiko packages``.
-    uninstall_package python-crypto
-
-    # A similar situation occurs with ``python-lxml``, which is required by
-    # ``ipa-client``, an auditing package we don't care about.  The
-    # build-dependencies needed for ``pip install lxml`` (``gcc``,
-    # ``libxml2-dev`` and ``libxslt-dev``) are present in ``files/rpms/general``.
-    uninstall_package python-lxml
-
-    # If the ``dbus`` package was installed by DevStack dependencies the
-    # uuid may not be generated because the service was never started (PR#598200),
-    # causing Nova to stop later on complaining that ``/var/lib/dbus/machine-id``
-    # does not exist.
-    sudo service messagebus restart
-
-    # ``setup.py`` contains a ``setup_requires`` package that is supposed
-    # to be transient.  However, RHEL6 distribute has a bug where
-    # ``setup_requires`` registers entry points that are not cleaned
-    # out properly after the setup-phase resulting in installation failures
-    # (bz#924038).  Pre-install the problem package so the ``setup_requires``
-    # dependency is satisfied and it will not be installed transiently.
-    # Note we do this before the track-depends below.
-    pip_install hgtools
-
-    # RHEL6's version of ``python-nose`` is incompatible with Tempest.
-    # Install nose 1.1 (Tempest-compatible) from EPEL
-    install_package python-nose1.1
-    # Add a symlink for the new nosetests to allow tox for Tempest to
-    # work unmolested.
-    sudo ln -sf /usr/bin/nosetests1.1 /usr/local/bin/nosetests
-fi
-
 TRACK_DEPENDS=${TRACK_DEPENDS:-False}
 
 # Install python packages into a virtualenv so that we can track them
 if [[ $TRACK_DEPENDS = True ]]; then
     echo_summary "Installing Python packages into a virtualenv $DEST/.venv"
-    install_package python-virtualenv
+    pip_install -U virtualenv
 
     rm -rf $DEST/.venv
     virtualenv --system-site-packages $DEST/.venv
@@ -657,20 +625,25 @@ fi
 
 echo_summary "Installing OpenStack project source"
 
-# Install pbr
-git_clone $PBR_REPO $PBR_DIR $PBR_BRANCH
-setup_develop $PBR_DIR
+# Install required infra support libraries
+install_infra
+
+# Install oslo libraries that have graduated
+install_oslo
 
 # Install clients libraries
 install_keystoneclient
 install_glanceclient
 install_cinderclient
 install_novaclient
-if is_service_enabled swift glance; then
+if is_service_enabled swift glance horizon; then
     install_swiftclient
 fi
-if is_service_enabled neutron nova; then
+if is_service_enabled neutron nova horizon; then
     install_neutronclient
+fi
+if is_service_enabled heat horizon; then
+    install_heatclient
 fi
 
 git_clone $OPENSTACKCLIENT_REPO $OPENSTACKCLIENT_DIR $OPENSTACKCLIENT_BRANCH
@@ -736,14 +709,15 @@ fi
 if is_service_enabled ceilometer; then
     install_ceilometerclient
     install_ceilometer
+    echo_summary "Configuring Ceilometer"
+    configure_ceilometer
+    configure_ceilometerclient
 fi
 
 if is_service_enabled heat; then
     install_heat
-    install_heatclient
     cleanup_heat
     configure_heat
-    configure_heatclient
 fi
 
 if is_service_enabled tls-proxy; then
@@ -752,6 +726,11 @@ if is_service_enabled tls-proxy; then
     init_cert
     # Add name to /etc/hosts
     # don't be naive and add to existing line!
+fi
+
+if is_service_enabled ir-api ir-cond; then
+    install_ironic
+    configure_ironic
 fi
 
 if [[ $TRACK_DEPENDS = True ]]; then
@@ -836,7 +815,7 @@ fi
 # Clear screen rc file
 SCREENRC=$TOP_DIR/$SCREEN_NAME-screenrc
 if [[ -e $SCREENRC ]]; then
-    echo -n > $SCREENRC
+    rm -f $SCREENRC
 fi
 
 # Initialize the directory for service status check
@@ -878,9 +857,12 @@ if is_service_enabled key; then
     export OS_SERVICE_ENDPOINT=$SERVICE_ENDPOINT
     create_keystone_accounts
     create_nova_accounts
-    create_swift_accounts
     create_cinder_accounts
     create_neutron_accounts
+
+    if is_service_enabled swift || is_service_enabled s-proxy; then
+        create_swift_accounts
+    fi
 
     # ``keystone_data.sh`` creates services, admin and demo users, and roles.
     ADMIN_PASSWORD=$ADMIN_PASSWORD SERVICE_TENANT_NAME=$SERVICE_TENANT_NAME SERVICE_PASSWORD=$SERVICE_PASSWORD \
@@ -919,6 +901,15 @@ if is_service_enabled g-reg; then
     init_glance
 fi
 
+# Ironic
+# ------
+
+if is_service_enabled ir-api ir-cond; then
+    echo_summary "Configuring Ironic"
+    init_ironic
+fi
+
+
 
 # Neutron
 # -------
@@ -927,7 +918,10 @@ if is_service_enabled neutron; then
     echo_summary "Configuring Neutron"
 
     configure_neutron
-    init_neutron
+    # Run init_neutron only on the node hosting the neutron API server
+    if is_service_enabled $DATABASE_BACKENDS && is_service_enabled q-svc; then
+        init_neutron
+    fi
 fi
 
 # Some Neutron plugins require network controllers which are not
@@ -983,6 +977,10 @@ if is_service_enabled cinder; then
     init_cinder
 fi
 
+
+# Compute Service
+# ---------------
+
 if is_service_enabled nova; then
     echo_summary "Configuring Nova"
     # Rebuild the config file from scratch
@@ -997,10 +995,15 @@ if is_service_enabled nova; then
     fi
 
 
+    if [[ -r $NOVA_PLUGINS/hypervisor-$VIRT_DRIVER ]]; then
+        # Configure hypervisor plugin
+        configure_nova_hypervisor
+
+
     # XenServer
     # ---------
 
-    if [ "$VIRT_DRIVER" = 'xenserver' ]; then
+    elif [ "$VIRT_DRIVER" = 'xenserver' ]; then
         echo_summary "Using XenServer virtualization driver"
         if [ -z "$XENAPI_CONNECTION_URL" ]; then
             die $LINENO "XENAPI_CONNECTION_URL is not specified"
@@ -1042,6 +1045,11 @@ if is_service_enabled nova; then
         iniset $NOVA_CONF baremetal driver $BM_DRIVER
         iniset $NOVA_CONF baremetal power_manager $BM_POWER_MANAGER
         iniset $NOVA_CONF baremetal tftp_root /tftpboot
+        if [[ "$BM_DNSMASQ_FROM_NOVA_NETWORK" = "True" ]]; then
+            BM_DNSMASQ_CONF=$NOVA_CONF_DIR/dnsmasq-for-baremetal-from-nova-network.conf
+            sudo cp "$FILES/dnsmasq-for-baremetal-from-nova-network.conf" "$BM_DNSMASQ_CONF"
+            iniset $NOVA_CONF DEFAULT dnsmasq_config_file "$BM_DNSMASQ_CONF"
+        fi
 
         # Define extra baremetal nova conf flags by defining the array ``EXTRA_BAREMETAL_OPTS``.
         for I in "${EXTRA_BAREMETAL_OPTS[@]}"; do
@@ -1077,10 +1085,10 @@ if is_service_enabled nova; then
         echo_summary "Using VMware vCenter driver"
         iniset $NOVA_CONF DEFAULT compute_driver "vmwareapi.VMwareVCDriver"
         VMWAREAPI_USER=${VMWAREAPI_USER:-"root"}
-        iniset $NOVA_CONF DEFAULT vmwareapi_host_ip "$VMWAREAPI_IP"
-        iniset $NOVA_CONF DEFAULT vmwareapi_host_username "$VMWAREAPI_USER"
-        iniset $NOVA_CONF DEFAULT vmwareapi_host_password "$VMWAREAPI_PASSWORD"
-        iniset $NOVA_CONF DEFAULT vmwareapi_cluster_name "$VMWAREAPI_CLUSTER"
+        iniset $NOVA_CONF vmware host_ip "$VMWAREAPI_IP"
+        iniset $NOVA_CONF vmware host_username "$VMWAREAPI_USER"
+        iniset $NOVA_CONF vmware host_password "$VMWAREAPI_PASSWORD"
+        iniset $NOVA_CONF vmware cluster_name "$VMWAREAPI_CLUSTER"
         if is_service_enabled neutron; then
             iniset $NOVA_CONF vmware integration_bridge $OVS_BRIDGE
         fi
@@ -1151,6 +1159,12 @@ if is_service_enabled g-api g-reg; then
     start_glance
 fi
 
+# Launch the Ironic services
+if is_service_enabled ir-api ir-cond; then
+    echo_summary "Starting Ironic"
+    start_ironic
+fi
+
 # Create an access key and secret key for nova ec2 register image
 if is_service_enabled key && is_service_enabled swift3 && is_service_enabled nova; then
     NOVA_USER_ID=$(keystone user-list | grep ' nova ' | get_field 1)
@@ -1208,9 +1222,6 @@ if is_service_enabled cinder; then
     start_cinder
 fi
 if is_service_enabled ceilometer; then
-    echo_summary "Configuring Ceilometer"
-    configure_ceilometer
-    configure_ceilometerclient
     echo_summary "Starting Ceilometer"
     init_ceilometer
     start_ceilometer
@@ -1290,15 +1301,16 @@ if is_service_enabled nova && is_baremetal; then
        create_baremetal_flavor $BM_DEPLOY_KERNEL_ID $BM_DEPLOY_RAMDISK_ID
 
     # otherwise user can manually add it later by calling nova-baremetal-manage
-    # otherwise user can manually add it later by calling nova-baremetal-manage
     [[ -n "$BM_FIRST_MAC" ]] && add_baremetal_node
 
-    # NOTE: we do this here to ensure that our copy of dnsmasq is running
-    sudo pkill dnsmasq || true
-    sudo dnsmasq --conf-file= --port=0 --enable-tftp --tftp-root=/tftpboot \
-        --dhcp-boot=pxelinux.0 --bind-interfaces --pid-file=/var/run/dnsmasq.pid \
-        --interface=$BM_DNSMASQ_IFACE --dhcp-range=$BM_DNSMASQ_RANGE \
-        ${BM_DNSMASQ_DNS:+--dhcp-option=option:dns-server,$BM_DNSMASQ_DNS}
+    if [[ "$BM_DNSMASQ_FROM_NOVA_NETWORK" = "False" ]]; then
+        # NOTE: we do this here to ensure that our copy of dnsmasq is running
+        sudo pkill dnsmasq || true
+        sudo dnsmasq --conf-file= --port=0 --enable-tftp --tftp-root=/tftpboot \
+            --dhcp-boot=pxelinux.0 --bind-interfaces --pid-file=/var/run/dnsmasq.pid \
+            --interface=$BM_DNSMASQ_IFACE --dhcp-range=$BM_DNSMASQ_RANGE \
+            ${BM_DNSMASQ_DNS:+--dhcp-option=option:dns-server,$BM_DNSMASQ_DNS}
+    fi
     # ensure callback daemon is running
     sudo pkill nova-baremetal-deploy-helper || true
     screen_it baremetal "nova-baremetal-deploy-helper"

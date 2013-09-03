@@ -29,6 +29,10 @@ THIS_DIR=$(cd $(dirname "$0") && pwd)
 # xapi functions
 . $THIS_DIR/functions
 
+# Determine what system we are running on.
+# Might not be XenServer if we're using xenserver-core
+GetDistro
+
 #
 # Get Settings
 #
@@ -63,12 +67,25 @@ fi
 
 ## Nova plugins
 NOVA_ZIPBALL_URL=${NOVA_ZIPBALL_URL:-$(zip_snapshot_location $NOVA_REPO $NOVA_BRANCH)}
-install_xapi_plugins_from_zipball $NOVA_ZIPBALL_URL
+EXTRACTED_NOVA=$(extract_remote_zipball "$NOVA_ZIPBALL_URL")
+install_xapi_plugins_from "$EXTRACTED_NOVA"
+
+LOGROT_SCRIPT=$(find "$EXTRACTED_NOVA" -name "rotate_xen_guest_logs.sh" -print)
+if [ -n "$LOGROT_SCRIPT" ]; then
+    mkdir -p "/var/log/xen/guest"
+    cp "$LOGROT_SCRIPT" /root/consolelogrotate
+    chmod +x /root/consolelogrotate
+    echo "* * * * * /root/consolelogrotate" | crontab
+fi
+
+rm -rf "$EXTRACTED_NOVA"
 
 ## Install the netwrap xapi plugin to support agent control of dom0 networking
 if [[ "$ENABLED_SERVICES" =~ "q-agt" && "$Q_PLUGIN" = "openvswitch" ]]; then
     NEUTRON_ZIPBALL_URL=${NEUTRON_ZIPBALL_URL:-$(zip_snapshot_location $NEUTRON_REPO $NEUTRON_BRANCH)}
-    install_xapi_plugins_from_zipball $NEUTRON_ZIPBALL_URL
+    EXTRACTED_NEUTRON=$(extract_remote_zipball "$NEUTRON_ZIPBALL_URL")
+    install_xapi_plugins_from "$EXTRACTED_NEUTRON"
+    rm -rf "$EXTRACTED_NEUTRON"
 fi
 
 create_directory_for_kernels
@@ -138,9 +155,7 @@ if [ "$DO_SHUTDOWN" = "1" ]; then
     # Destroy any instances that were launched
     for uuid in `xe vm-list | grep -1 instance | grep uuid | sed "s/.*\: //g"`; do
         echo "Shutting down nova instance $uuid"
-        xe vm-unpause uuid=$uuid || true
-        xe vm-shutdown uuid=$uuid || true
-        xe vm-destroy uuid=$uuid
+        xe vm-uninstall uuid=$uuid force=true
     done
 
     # Destroy orphaned vdis
@@ -156,8 +171,8 @@ fi
 #
 
 GUEST_NAME=${GUEST_NAME:-"DevStackOSDomU"}
-TNAME="devstack_template"
-SNAME_PREPARED="template_prepared"
+TNAME="jeos_template_for_devstack"
+SNAME_TEMPLATE="jeos_snapshot_for_devstack"
 SNAME_FIRST_BOOT="before_first_boot"
 
 function wait_for_VM_to_halt() {
@@ -223,21 +238,8 @@ if [ -z "$templateuuid" ]; then
     vm_uuid=$(xe_min vm-list name-label="$GUEST_NAME")
     xe vm-param-set actions-after-reboot=Restart uuid="$vm_uuid"
 
-    #
-    # Prepare VM for DevStack
-    #
-
-    # Install XenServer tools, and other such things
-    $THIS_DIR/prepare_guest_template.sh "$GUEST_NAME"
-
-    # start the VM to run the prepare steps
-    xe vm-start vm="$GUEST_NAME"
-
-    # Wait for prep script to finish and shutdown system
-    wait_for_VM_to_halt
-
     # Make template from VM
-    snuuid=$(xe vm-snapshot vm="$GUEST_NAME" new-name-label="$SNAME_PREPARED")
+    snuuid=$(xe vm-snapshot vm="$GUEST_NAME" new-name-label="$SNAME_TEMPLATE")
     xe snapshot-clone uuid=$snuuid new-name-label="$TNAME"
 else
     #
@@ -245,6 +247,19 @@ else
     #
     vm_uuid=$(xe vm-install template="$TNAME" new-name-label="$GUEST_NAME")
 fi
+
+#
+# Prepare VM for DevStack
+#
+
+# Install XenServer tools, and other such things
+$THIS_DIR/prepare_guest_template.sh "$GUEST_NAME"
+
+# start the VM to run the prepare steps
+xe vm-start vm="$GUEST_NAME"
+
+# Wait for prep script to finish and shutdown system
+wait_for_VM_to_halt
 
 ## Setup network cards
 # Wipe out all

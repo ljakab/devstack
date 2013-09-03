@@ -18,15 +18,38 @@ XTRACE=$(set +o | grep xtrace)
 set +o xtrace
 
 
-# Exit 0 if address is in network or 1 if address is not in
-# network or netaddr library is not installed.
+# Convert CIDR notation to a IPv4 netmask
+# cidr2netmask cidr-bits
+function cidr2netmask() {
+    local maskpat="255 255 255 255"
+    local maskdgt="254 252 248 240 224 192 128"
+    set -- ${maskpat:0:$(( ($1 / 8) * 4 ))}${maskdgt:$(( (7 - ($1 % 8)) * 4 )):3}
+    echo ${1-0}.${2-0}.${3-0}.${4-0}
+}
+
+
+# Return the network portion of the given IP address using netmask
+# netmask is in the traditional dotted-quad format
+# maskip ip-address netmask
+function maskip() {
+    local ip=$1
+    local mask=$2
+    local l="${ip%.*}"; local r="${ip#*.}"; local n="${mask%.*}"; local m="${mask#*.}"
+    local subnet=$((${ip%%.*}&${mask%%.*})).$((${r%%.*}&${m%%.*})).$((${l##*.}&${n##*.})).$((${ip##*.}&${mask##*.}))
+    echo $subnet
+}
+
+
+# Exit 0 if address is in network or 1 if address is not in network
+# ip-range is in CIDR notation: 1.2.3.4/20
 # address_in_net ip-address ip-range
 function address_in_net() {
-    python -c "
-import netaddr
-import sys
-sys.exit(netaddr.IPAddress('$1') not in netaddr.IPNetwork('$2'))
-"
+    local ip=$1
+    local range=$2
+    local masklen=${range#*/}
+    local network=$(maskip ${range%/*} $(cidr2netmask $masklen))
+    local subnet=$(maskip $ip $(cidr2netmask $masklen))
+    [[ $network == $subnet ]]
 }
 
 
@@ -53,6 +76,19 @@ function cp_it {
 }
 
 
+# Prints backtrace info
+# filename:lineno:function
+function backtrace {
+    local level=$1
+    local deep=$((${#BASH_SOURCE[@]} - 1))
+    echo "[Call Trace]"
+    while [ $level -le $deep ]; do
+        echo "${BASH_SOURCE[$deep]}:${BASH_LINENO[$deep-1]}:${FUNCNAME[$deep-1]}"
+        deep=$((deep - 1))
+    done
+}
+
+
 # Prints line number and "message" then exits
 # die $LINENO "message"
 function die() {
@@ -62,6 +98,7 @@ function die() {
     if [ $exitcode == 0 ]; then
         exitcode=1
     fi
+    backtrace 2
     err $line "$*"
     exit $exitcode
 }
@@ -90,7 +127,7 @@ function err() {
     local exitcode=$?
     errXTRACE=$(set +o | grep xtrace)
     set +o xtrace
-    local msg="[ERROR] $0:$1 $2"
+    local msg="[ERROR] ${BASH_SOURCE[2]}:$1 $2"
     echo $msg 1>&2;
     if [[ -n ${SCREEN_LOGDIR} ]]; then
         echo $msg >> "${SCREEN_LOGDIR}/error.log"
@@ -280,16 +317,36 @@ function get_packages() {
                 continue
             fi
 
+            # Assume we want this package
+            package=${line%#*}
+            inst_pkg=1
+
+            # Look for # dist:xxx in comment
             if [[ $line =~ (.*)#.*dist:([^ ]*) ]]; then
                 # We are using BASH regexp matching feature.
                 package=${BASH_REMATCH[1]}
                 distros=${BASH_REMATCH[2]}
                 # In bash ${VAR,,} will lowecase VAR
-                [[ ${distros,,} =~ ${DISTRO,,} ]] && echo $package
-                continue
+                # Look for a match in the distro list
+                if [[ ! ${distros,,} =~ ${DISTRO,,} ]]; then
+                    # If no match then skip this package
+                    inst_pkg=0
+                fi
             fi
 
-            echo ${line%#*}
+            # Look for # testonly in comment
+            if [[ $line =~ (.*)#.*testonly.* ]]; then
+                package=${BASH_REMATCH[1]}
+                # Are we installing test packages? (test for the default value)
+                if [[ $INSTALL_TESTONLY_PACKAGES = "False" ]]; then
+                    # If not installing test packages the skip this package
+                    inst_pkg=0
+                fi
+            fi
+
+            if [[ $inst_pkg = 1 ]]; then
+                echo $package
+            fi
         done
         IFS=$OIFS
     done
@@ -350,8 +407,9 @@ GetOSVersion() {
         # CentOS release 5.5 (Final)
         # CentOS Linux release 6.0 (Final)
         # Fedora release 16 (Verne)
+        # XenServer release 6.2.0-70446c (xenenterprise)
         os_CODENAME=""
-        for r in "Red Hat" CentOS Fedora; do
+        for r in "Red Hat" CentOS Fedora XenServer; do
             os_VENDOR=$r
             if [[ -n "`grep \"$r\" /etc/redhat-release`" ]]; then
                 ver=`sed -e 's/^.* \(.*\) (\(.*\)).*$/\1\|\2/' /etc/redhat-release`
@@ -414,6 +472,8 @@ function GetDistro() {
     elif [[ "$os_VENDOR" =~ (Red Hat) || "$os_VENDOR" =~ (CentOS) ]]; then
         # Drop the . release as we assume it's compatible
         DISTRO="rhel${os_RELEASE::1}"
+    elif [[ "$os_VENDOR" =~ (XenServer) ]]; then
+        DISTRO="xs$os_RELEASE"
     else
         # Catch-all for now is Vendor + Release + Update
         DISTRO="$os_VENDOR-$os_RELEASE.$os_UPDATE"
@@ -722,12 +782,17 @@ function is_running() {
 #   For backward compatibility if we have **swift** in ENABLED_SERVICES all the
 #   **s-** services will be enabled. This will be deprecated in the future.
 #
+# Cells within nova is enabled if **n-cell** is in ``ENABLED_SERVICES``.
+# We also need to make sure to treat **n-cell-region** and **n-cell-child**
+# as enabled in this case.
+#
 # Uses global ``ENABLED_SERVICES``
 # is_service_enabled service [service ...]
 function is_service_enabled() {
     services=$@
     for service in ${services}; do
         [[ ,${ENABLED_SERVICES}, =~ ,${service}, ]] && return 0
+        [[ ${service} == n-cell-* && ${ENABLED_SERVICES} =~ "n-cell" ]] && return 0
         [[ ${service} == "nova" && ${ENABLED_SERVICES} =~ "n-" ]] && return 0
         [[ ${service} == "cinder" && ${ENABLED_SERVICES} =~ "c-" ]] && return 0
         [[ ${service} == "ceilometer" && ${ENABLED_SERVICES} =~ "ceilometer-" ]] && return 0
@@ -867,7 +932,7 @@ function is_package_installed() {
     fi
 
     if [[ "$os_PACKAGE" = "deb" ]]; then
-        dpkg -l "$@" > /dev/null
+        dpkg -s "$@" > /dev/null 2> /dev/null
     elif [[ "$os_PACKAGE" = "rpm" ]]; then
         rpm --quiet -q "$@"
     else
@@ -902,24 +967,41 @@ function pip_install {
         CMD_PIP=$(get_pip_command)
     fi
 
-    if [[ is_fedora && $DISTRO =~ (rhel6) ]]; then
-        # RHEL6 pip by default doesn't have this (was introduced
-        # around 0.8.1 or so)
-        PIP_USE_MIRRORS=${PIP_USE_MIRRORS:-False}
-    else
-        PIP_USE_MIRRORS=${PIP_USE_MIRRORS:-True}
-    fi
+    # Mirror option not needed anymore because pypi has CDN available,
+    # but it's useful in certain circumstances
+    PIP_USE_MIRRORS=${PIP_USE_MIRRORS:-False}
     if [[ "$PIP_USE_MIRRORS" != "False" ]]; then
         PIP_MIRROR_OPT="--use-mirrors"
     fi
+
+    # pip < 1.4 has a bug where it will use an already existing build
+    # directory unconditionally.  Say an earlier component installs
+    # foo v1.1; pip will have built foo's source in
+    # /tmp/$USER-pip-build.  Even if a later component specifies foo <
+    # 1.1, the existing extracted build will be used and cause
+    # confusing errors.  By creating unique build directories we avoid
+    # this problem. See
+    #  https://github.com/pypa/pip/issues/709
+    local pip_build_tmp=$(mktemp --tmpdir -d pip-build.XXXXX)
 
     $SUDO_PIP PIP_DOWNLOAD_CACHE=${PIP_DOWNLOAD_CACHE:-/var/cache/pip} \
         HTTP_PROXY=$http_proxy \
         HTTPS_PROXY=$https_proxy \
         NO_PROXY=$no_proxy \
-        $CMD_PIP install $PIP_MIRROR_OPT $@
+        $CMD_PIP install --build=${pip_build_tmp} \
+        $PIP_MIRROR_OPT $@ \
+        && $SUDO_PIP rm -rf ${pip_build_tmp}
 }
 
+
+# Cleanup anything from /tmp on unstack
+# clean_tmp
+function cleanup_tmp {
+    local tmp_dir=${TMPDIR:-/tmp}
+
+    # see comments in pip_install
+    sudo rm -rf ${tmp_dir}/pip-build.*
+}
 
 # Service wrapper to restart services
 # restart_service service-name
@@ -1001,7 +1083,7 @@ function screen_it {
             sleep 1.5
 
             NL=`echo -ne '\015'`
-            screen -S $SCREEN_NAME -p $1 -X stuff "$2 || touch \"$SERVICE_DIR/$SCREEN_NAME/$1.failure\"$NL"
+            screen -S $SCREEN_NAME -p $1 -X stuff "$2 || echo \"$1 failed to start\" | tee \"$SERVICE_DIR/$SCREEN_NAME/$1.failure\"$NL"
         else
             # Spawn directly without screen
             run_process "$1" "$2" >$SERVICE_DIR/$SCREEN_NAME/$service.pid
@@ -1067,7 +1149,7 @@ function service_check() {
 
     for service in $failures; do
         service=`basename $service`
-        service=${service::-8}
+        service=${service%.failure}
         echo "Error: Service $service is not running"
     done
 
@@ -1077,29 +1159,29 @@ function service_check() {
 }
 
 
-# ``pip install`` the dependencies of the package before ``setup.py develop``
-# so pip and not distutils processes the dependency chain
-# Uses globals ``TRACK_DEPENDES``, ``*_proxy`
+# ``pip install -e`` the package, which processes the dependencies
+# using pip before running `setup.py develop`
+# Uses globals ``STACK_USER``, ``TRACK_DEPENDS``, ``REQUIREMENTS_DIR``
 # setup_develop directory
 function setup_develop() {
+    local project_dir=$1
     if [[ $TRACK_DEPENDS = True ]]; then
         SUDO_CMD="env"
     else
         SUDO_CMD="sudo"
     fi
-    for reqs_file in $1/requirements.txt $1/tools/pip-requires ; do
-        if [ -f $reqs_file ] ; then
-            pip_install -r $reqs_file
-        fi
-    done
-    (cd $1; \
-        python setup.py egg_info; \
-        $SUDO_CMD \
-            HTTP_PROXY=$http_proxy \
-            HTTPS_PROXY=$https_proxy \
-            NO_PROXY=$no_proxy \
-            python setup.py develop \
-    )
+
+    echo "cd $REQUIREMENTS_DIR; $SUDO_CMD python update.py $project_dir"
+
+    # Don't update repo if local changes exist
+    if (cd $project_dir && git diff --quiet); then
+        (cd $REQUIREMENTS_DIR; \
+            $SUDO_CMD python update.py $project_dir)
+    fi
+
+    pip_install -e $project_dir
+    # ensure that further actions can do things like setup.py sdist
+    $SUDO_CMD chown -R $STACK_USER $1/*.egg-info
 }
 
 
@@ -1170,12 +1252,36 @@ function upload_image() {
         return
     fi
 
-    # XenServer-ovf-format images are provided as .vhd.tgz as well
+    # vmdk format images
+    if [[ "$image_url" =~ '.vmdk' ]]; then
+        IMAGE="$FILES/${IMAGE_FNAME}"
+        IMAGE_NAME="${IMAGE_FNAME%.vmdk}"
+        glance --os-auth-token $token --os-image-url http://$GLANCE_HOSTPORT image-create --name "$IMAGE_NAME" --is-public=True --container-format bare --disk-format vmdk --property vmware-disktype="preallocated" < "${IMAGE}"
+        return
+    fi
+
+    # XenServer-vhd-ovf-format images are provided as .vhd.tgz
     # and should not be decompressed prior to loading
     if [[ "$image_url" =~ '.vhd.tgz' ]]; then
         IMAGE="$FILES/${IMAGE_FNAME}"
         IMAGE_NAME="${IMAGE_FNAME%.vhd.tgz}"
         glance --os-auth-token $token --os-image-url http://$GLANCE_HOSTPORT image-create --name "$IMAGE_NAME" --is-public=True --container-format=ovf --disk-format=vhd < "${IMAGE}"
+        return
+    fi
+
+    # .xen-raw.tgz suggests a Xen capable raw image inside a tgz.
+    # and should not be decompressed prior to loading.
+    # Setting metadata, so PV mode is used.
+    if [[ "$image_url" =~ '.xen-raw.tgz' ]]; then
+        IMAGE="$FILES/${IMAGE_FNAME}"
+        IMAGE_NAME="${IMAGE_FNAME%.xen-raw.tgz}"
+        glance \
+          --os-auth-token $token \
+          --os-image-url http://$GLANCE_HOSTPORT \
+          image-create \
+            --name "$IMAGE_NAME" --is-public=True \
+            --container-format=tgz --disk-format=raw \
+            --property vm_mode=xen < "${IMAGE}"
         return
     fi
 
@@ -1239,9 +1345,9 @@ function upload_image() {
 
     if [ "$CONTAINER_FORMAT" = "bare" ]; then
         if [ "$UNPACK" = "zcat" ]; then
-            glance --os-auth-token $token --os-image-url http://$GLANCE_HOSTPORT image-create --name "$IMAGE_NAME" --public --container-format=$CONTAINER_FORMAT --disk-format $DISK_FORMAT < <(zcat --force "${IMAGE}")
+            glance --os-auth-token $token --os-image-url http://$GLANCE_HOSTPORT image-create --name "$IMAGE_NAME" --is-public True --container-format=$CONTAINER_FORMAT --disk-format $DISK_FORMAT < <(zcat --force "${IMAGE}")
         else
-            glance --os-auth-token $token --os-image-url http://$GLANCE_HOSTPORT image-create --name "$IMAGE_NAME" --public --container-format=$CONTAINER_FORMAT --disk-format $DISK_FORMAT < "${IMAGE}"
+            glance --os-auth-token $token --os-image-url http://$GLANCE_HOSTPORT image-create --name "$IMAGE_NAME" --is-public True --container-format=$CONTAINER_FORMAT --disk-format $DISK_FORMAT < "${IMAGE}"
         fi
     else
         # Use glance client to add the kernel the root filesystem.
@@ -1249,12 +1355,12 @@ function upload_image() {
         # kernel for use when uploading the root filesystem.
         KERNEL_ID=""; RAMDISK_ID="";
         if [ -n "$KERNEL" ]; then
-            KERNEL_ID=$(glance --os-auth-token $token --os-image-url http://$GLANCE_HOSTPORT image-create --name "$IMAGE_NAME-kernel" --public --container-format aki --disk-format aki < "$KERNEL" | grep ' id ' | get_field 2)
+            KERNEL_ID=$(glance --os-auth-token $token --os-image-url http://$GLANCE_HOSTPORT image-create --name "$IMAGE_NAME-kernel" --is-public True --container-format aki --disk-format aki < "$KERNEL" | grep ' id ' | get_field 2)
         fi
         if [ -n "$RAMDISK" ]; then
-            RAMDISK_ID=$(glance --os-auth-token $token --os-image-url http://$GLANCE_HOSTPORT image-create --name "$IMAGE_NAME-ramdisk" --public --container-format ari --disk-format ari < "$RAMDISK" | grep ' id ' | get_field 2)
+            RAMDISK_ID=$(glance --os-auth-token $token --os-image-url http://$GLANCE_HOSTPORT image-create --name "$IMAGE_NAME-ramdisk" --is-public True --container-format ari --disk-format ari < "$RAMDISK" | grep ' id ' | get_field 2)
         fi
-        glance --os-auth-token $token --os-image-url http://$GLANCE_HOSTPORT image-create --name "${IMAGE_NAME%.img}" --public --container-format ami --disk-format ami ${KERNEL_ID:+--property kernel_id=$KERNEL_ID} ${RAMDISK_ID:+--property ramdisk_id=$RAMDISK_ID} < "${IMAGE}"
+        glance --os-auth-token $token --os-image-url http://$GLANCE_HOSTPORT image-create --name "${IMAGE_NAME%.img}" --is-public True --container-format ami --disk-format ami ${KERNEL_ID:+--property kernel_id=$KERNEL_ID} ${RAMDISK_ID:+--property ramdisk_id=$RAMDISK_ID} < "${IMAGE}"
     fi
 }
 
@@ -1366,6 +1472,19 @@ function _ping_check_novanet() {
     fi
 }
 
+# Get ip of instance
+function get_instance_ip(){
+    local vm_id=$1
+    local network_name=$2
+    local nova_result="$(nova show $vm_id)"
+    local ip=$(echo "$nova_result" | grep "$network_name" | get_field 2)
+    if [[ $ip = "" ]];then
+        echo "$nova_result"
+        die $LINENO "[Fail] Coudn't get ipaddress of VM"
+        exit 1
+    fi
+    echo $ip
+}
 
 # ssh check
 
@@ -1434,11 +1553,7 @@ function get_rootwrap_location() {
 # Get the path to the pip command.
 # get_pip_command
 function get_pip_command() {
-    if is_fedora; then
-        which pip-python
-    else
-        which pip
-    fi
+    which pip || which pip-python
 
     if [ $? -ne 0 ]; then
         die $LINENO "Unable to find pip; cannot continue"

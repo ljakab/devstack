@@ -1,6 +1,6 @@
 bridge-utils
 pylint
-python-pip
+python-setuptools
 screen
 unzip
 wget
@@ -20,4 +20,3 @@ tcpdump
 euca2ools # only for testing client
 tar
 python-cmd2 # dist:precise
-python-netaddr

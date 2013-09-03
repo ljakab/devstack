@@ -80,6 +80,15 @@ BM_USE_FAKE_ENV=`trueorfalse False $BM_USE_FAKE_ENV`
 # change the virtualization type: --engine qemu
 BM_POSEUR_EXTRA_OPTS=${BM_POSEUR_EXTRA_OPTS:-}
 
+# To provide PXE, configure nova-network's dnsmasq rather than run the one
+# dedicated to baremetal. When enable this, make sure these conditions are
+# fulfilled:
+#  1) nova-compute and nova-network runs on the same host
+#  2) nova-network uses FlatDHCPManager
+# NOTE: the other BM_DNSMASQ_* have no effect on the behavior if this option
+#       is enabled.
+BM_DNSMASQ_FROM_NOVA_NETWORK=`trueorfalse False $BM_DNSMASQ_FROM_NOVA_NETWORK`
+
 # BM_DNSMASQ_IFACE should match FLAT_NETWORK_BRIDGE
 if [ "$BM_USE_FAKE_ENV" ]; then
     BM_DNSMASQ_IFACE=${BM_DNSMASQ_IFACE:-br99}
@@ -129,9 +138,12 @@ BM_FLAVOR_ARCH=${BM_FLAVOR_ARCH:-$BM_CPU_ARCH}
 BM_IMAGE_BUILD_DIR=${BM_IMAGE_BUILD_DIR:-$DEST/diskimage-builder}
 BM_POSEUR_DIR=${BM_POSEUR_DIR:-$DEST/bm_poseur}
 
-BM_HOST_CURRENT_KERNEL=$(uname -r)
-BM_DEPLOY_RAMDISK=${BM_DEPLOY_RAMDISK:-bm-deploy-$BM_HOST_CURRENT_KERNEL-initrd}
-BM_DEPLOY_KERNEL=${BM_DEPLOY_KERNEL:-bm-deploy-$BM_HOST_CURRENT_KERNEL-vmlinuz}
+# Use DIB to create deploy ramdisk and kernel.
+BM_BUILD_DEPLOY_RAMDISK=`trueorfalse True $BM_BUILD_DEPLOY_RAMDISK`
+# If not use DIB, these files are used as deploy ramdisk/kernel.
+# (The value must be a relative path from $TOP_DIR/files/)
+BM_DEPLOY_RAMDISK=${BM_DEPLOY_RAMDISK:-}
+BM_DEPLOY_KERNEL=${BM_DEPLOY_KERNEL:-}
 
 # If you need to add any extra flavors to the deploy ramdisk image
 # eg, specific network drivers, specify them here
@@ -224,13 +236,13 @@ function configure_baremetal_nova_dirs() {
 function upload_baremetal_deploy() {
     token=$1
 
-    if [ ! -e $TOP_DIR/files/$BM_DEPLOY_KERNEL -a -e /boot/vmlinuz-$BM_HOST_CURRENT_KERNEL ]; then
-        sudo cp /boot/vmlinuz-$BM_HOST_CURRENT_KERNEL $TOP_DIR/files/$BM_DEPLOY_KERNEL
-        sudo chmod a+r $TOP_DIR/files/$BM_DEPLOY_KERNEL
-    fi
-    if [ ! -e $TOP_DIR/files/$BM_DEPLOY_RAMDISK ]; then
-       $BM_IMAGE_BUILD_DIR/bin/ramdisk-image-create $BM_DEPLOY_FLAVOR deploy \
-           -o $TOP_DIR/files/$BM_DEPLOY_RAMDISK -k $BM_HOST_CURRENT_KERNEL
+    if [ "$BM_BUILD_DEPLOY_RAMDISK" = "True" ]; then
+        BM_DEPLOY_KERNEL=bm-deploy.kernel
+        BM_DEPLOY_RAMDISK=bm-deploy.initramfs
+        if [ ! -e "$TOP_DIR/files/$BM_DEPLOY_KERNEL" -o ! -e "$TOP_DIR/files/$BM_DEPLOY_RAMDISK" ]; then
+            $BM_IMAGE_BUILD_DIR/bin/ramdisk-image-create $BM_DEPLOY_FLAVOR deploy \
+                -o $TOP_DIR/files/bm-deploy
+        fi
     fi
 
     # load them into glance
@@ -239,14 +251,14 @@ function upload_baremetal_deploy() {
          --os-image-url http://$GLANCE_HOSTPORT \
          image-create \
          --name $BM_DEPLOY_KERNEL \
-         --public --disk-format=aki \
+         --is-public True --disk-format=aki \
          < $TOP_DIR/files/$BM_DEPLOY_KERNEL  | grep ' id ' | get_field 2)
     BM_DEPLOY_RAMDISK_ID=$(glance \
          --os-auth-token $token \
          --os-image-url http://$GLANCE_HOSTPORT \
          image-create \
          --name $BM_DEPLOY_RAMDISK \
-         --public --disk-format=ari \
+         --is-public True --disk-format=ari \
          < $TOP_DIR/files/$BM_DEPLOY_RAMDISK  | grep ' id ' | get_field 2)
 }
 
@@ -294,14 +306,14 @@ function extract_and_upload_k_and_r_from_image() {
          --os-image-url http://$GLANCE_HOSTPORT \
          image-create \
          --name $image_name-kernel \
-         --public --disk-format=aki \
+         --is-public True --disk-format=aki \
          < $TOP_DIR/files/$OUT_KERNEL | grep ' id ' | get_field 2)
     RAMDISK_ID=$(glance \
          --os-auth-token $token \
          --os-image-url http://$GLANCE_HOSTPORT \
          image-create \
          --name $image_name-initrd \
-         --public --disk-format=ari \
+         --is-public True --disk-format=ari \
          < $TOP_DIR/files/$OUT_RAMDISK | grep ' id ' | get_field 2)
 }
 
@@ -371,14 +383,14 @@ function upload_baremetal_image() {
             --os-auth-token $token \
             --os-image-url http://$GLANCE_HOSTPORT \
             image-create \
-            --name "$IMAGE_NAME-kernel" --public \
+            --name "$IMAGE_NAME-kernel" --is-public True \
             --container-format aki \
             --disk-format aki < "$KERNEL" | grep ' id ' | get_field 2)
         RAMDISK_ID=$(glance \
             --os-auth-token $token \
             --os-image-url http://$GLANCE_HOSTPORT \
             image-create \
-            --name "$IMAGE_NAME-ramdisk" --public \
+            --name "$IMAGE_NAME-ramdisk" --is-public True \
             --container-format ari \
             --disk-format ari < "$RAMDISK" | grep ' id ' | get_field 2)
     else
@@ -390,7 +402,7 @@ function upload_baremetal_image() {
        --os-auth-token $token \
        --os-image-url http://$GLANCE_HOSTPORT \
        image-create \
-       --name "${IMAGE_NAME%.img}" --public \
+       --name "${IMAGE_NAME%.img}" --is-public True \
        --container-format $CONTAINER_FORMAT \
        --disk-format $DISK_FORMAT \
        ${KERNEL_ID:+--property kernel_id=$KERNEL_ID} \

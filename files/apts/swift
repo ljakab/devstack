@@ -1,5 +1,6 @@
 curl
 gcc
+libffi-dev
 memcached
 python-configobj
 python-coverage
@@ -9,7 +10,6 @@ python-greenlet
 python-netifaces
 python-nose
 python-pastedeploy
-python-setuptools
 python-simplejson
 python-webob
 python-xattr

@@ -212,7 +212,7 @@ function configure_cinder() {
 
     cp $CINDER_DIR/etc/cinder/cinder.conf.sample $CINDER_CONF
     iniset $CINDER_CONF DEFAULT auth_strategy keystone
-    iniset $CINDER_CONF DEFAULT debug True
+    iniset $CINDER_CONF DEFAULT debug $ENABLE_DEBUG_LOG_LEVEL
     iniset $CINDER_CONF DEFAULT verbose True
     if [ "$CINDER_MULTI_LVM_BACKEND" = "True" ]; then
         iniset $CINDER_CONF DEFAULT enabled_backends lvmdriver-1,lvmdriver-2
@@ -233,6 +233,10 @@ function configure_cinder() {
     iniset $CINDER_CONF DEFAULT osapi_volume_extension cinder.api.contrib.standard_extensions
     iniset $CINDER_CONF DEFAULT state_path $CINDER_STATE_PATH
     iniset $CINDER_CONF DEFAULT periodic_interval $CINDER_PERIODIC_INTERVAL
+
+    if is_service_enabled ceilometer; then
+        iniset $CINDER_CONF DEFAULT notification_driver "cinder.openstack.common.notifier.rpc_notifier"
+    fi
 
     if is_service_enabled tls-proxy; then
         # Set the service port for a proxy to take the original
@@ -283,6 +287,13 @@ function configure_cinder() {
             CINDER_GLUSTERFS_SHARES=$(echo $CINDER_GLUSTERFS_SHARES | tr ";" "\n")
             echo "$CINDER_GLUSTERFS_SHARES" > $CINDER_CONF_DIR/glusterfs_shares
         fi
+    elif [ "$CINDER_DRIVER" == "vsphere" ]; then
+        echo_summary "Using VMware vCenter driver"
+        iniset $CINDER_CONF DEFAULT vmware_host_ip "$VMWAREAPI_IP"
+        iniset $CINDER_CONF DEFAULT vmware_host_username "$VMWAREAPI_USER"
+        iniset $CINDER_CONF DEFAULT vmware_host_password "$VMWAREAPI_PASSWORD"
+        iniset $CINDER_CONF DEFAULT vmware_cluster_name "$VMWAREAPI_CLUSTER"
+        iniset $CINDER_CONF DEFAULT volume_driver "cinder.volume.drivers.vmware.vmdk.VMwareVcVmdkDriver"
     fi
 
     if [[ is_fedora && $DISTRO =~ (rhel6) ]]; then
@@ -296,6 +307,10 @@ function configure_cinder() {
             -e 's/snapshot_autoextend_percent =.*/snapshot_autoextend_percent = 20/' \
             /etc/lvm/lvm.conf
     fi
+    iniset $CINDER_CONF keystone_authtoken auth_uri $KEYSTONE_SERVICE_PROTOCOL://$KEYSTONE_SERVICE_HOST:$KEYSTONE_SERVICE_PORT
+    iniset $CINDER_CONF keystone_authtoken admin_user cinder
+    iniset $CINDER_CONF keystone_authtoken admin_tenant_name $SERVICE_TENANT_NAME
+    iniset $CINDER_CONF keystone_authtoken admin_password $SERVICE_PASSWORD
 
 }
 
@@ -320,9 +335,9 @@ create_cinder_accounts() {
             --email=cinder@example.com \
             | grep " id " | get_field 2)
         keystone user-role-add \
-            --tenant_id $SERVICE_TENANT \
-            --user_id $CINDER_USER \
-            --role_id $ADMIN_ROLE
+            --tenant-id $SERVICE_TENANT \
+            --user-id $CINDER_USER \
+            --role-id $ADMIN_ROLE
         if [[ "$KEYSTONE_CATALOG_BACKEND" = 'sql' ]]; then
             CINDER_SERVICE=$(keystone service-create \
                 --name=cinder \
@@ -335,6 +350,18 @@ create_cinder_accounts() {
                 --publicurl "$CINDER_SERVICE_PROTOCOL://$CINDER_SERVICE_HOST:$CINDER_SERVICE_PORT/v1/\$(tenant_id)s" \
                 --adminurl "$CINDER_SERVICE_PROTOCOL://$CINDER_SERVICE_HOST:$CINDER_SERVICE_PORT/v1/\$(tenant_id)s" \
                 --internalurl "$CINDER_SERVICE_PROTOCOL://$CINDER_SERVICE_HOST:$CINDER_SERVICE_PORT/v1/\$(tenant_id)s"
+            CINDER_V2_SERVICE=$(keystone service-create \
+                --name=cinder \
+                --type=volumev2 \
+                --description="Cinder Volume Service V2" \
+                | grep " id " | get_field 2)
+            keystone endpoint-create \
+                --region RegionOne \
+                --service_id $CINDER_V2_SERVICE \
+                --publicurl "$CINDER_SERVICE_PROTOCOL://$CINDER_SERVICE_HOST:$CINDER_SERVICE_PORT/v2/\$(tenant_id)s" \
+                --adminurl "$CINDER_SERVICE_PROTOCOL://$CINDER_SERVICE_HOST:$CINDER_SERVICE_PORT/v2/\$(tenant_id)s" \
+                --internalurl "$CINDER_SERVICE_PROTOCOL://$CINDER_SERVICE_HOST:$CINDER_SERVICE_PORT/v2/\$(tenant_id)s"
+
         fi
     fi
 }
@@ -440,6 +467,7 @@ function install_cinder() {
 function install_cinderclient() {
     git_clone $CINDERCLIENT_REPO $CINDERCLIENT_DIR $CINDERCLIENT_BRANCH
     setup_develop $CINDERCLIENT_DIR
+    sudo install -D -m 0644 -o $STACK_USER {$CINDERCLIENT_DIR/tools/,/etc/bash_completion.d/}cinder.bash_completion
 }
 
 # apply config.d approach for cinder volumes directory

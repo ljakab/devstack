@@ -96,6 +96,10 @@ HEATCLIENT_BRANCH=${HEATCLIENT_BRANCH:-master}
 HORIZON_REPO=${HORIZON_REPO:-${GIT_BASE}/openstack/horizon.git}
 HORIZON_BRANCH=${HORIZON_BRANCH:-master}
 
+# baremetal provisionint service
+IRONIC_REPO=${IRONIC_REPO:-${GIT_BASE}/openstack/ironic.git}
+IRONIC_BRANCH=${IRONIC_BRANCH:-master}
+
 # unified auth system (manages accounts/tokens)
 KEYSTONE_REPO=${KEYSTONE_REPO:-${GIT_BASE}/openstack/keystone.git}
 KEYSTONE_BRANCH=${KEYSTONE_BRANCH:-master}
@@ -116,6 +120,14 @@ NOVACLIENT_BRANCH=${NOVACLIENT_BRANCH:-master}
 OPENSTACKCLIENT_REPO=${OPENSTACKCLIENT_REPO:-${GIT_BASE}/openstack/python-openstackclient.git}
 OPENSTACKCLIENT_BRANCH=${OPENSTACKCLIENT_BRANCH:-master}
 
+# oslo.config
+OSLOCFG_REPO=${OSLOCFG_REPO:-${GIT_BASE}/openstack/oslo.config.git}
+OSLOCFG_BRANCH=${OSLOCFG_BRANCH:-master}
+
+# oslo.messaging
+OSLOMSG_REPO=${OSLOMSG_REPO:-${GIT_BASE}/openstack/oslo.messaging.git}
+OSLOMSG_BRANCH=${OSLOMSG_BRANCH:-master}
+
 # pbr drives the setuptools configs
 PBR_REPO=${PBR_REPO:-${GIT_BASE}/openstack-dev/pbr.git}
 PBR_BRANCH=${PBR_BRANCH:-master}
@@ -127,6 +139,10 @@ NEUTRON_BRANCH=${NEUTRON_BRANCH:-master}
 # neutron client
 NEUTRONCLIENT_REPO=${NEUTRONCLIENT_REPO:-${GIT_BASE}/openstack/python-neutronclient.git}
 NEUTRONCLIENT_BRANCH=${NEUTRONCLIENT_BRANCH:-master}
+
+# consolidated openstack requirements
+REQUIREMENTS_REPO=${REQUIREMENTS_REPO:-${GIT_BASE}/openstack/requirements.git}
+REQUIREMENTS_BRANCH=${REQUIREMENTS_BRANCH:-master}
 
 # storage service
 SWIFT_REPO=${SWIFT_REPO:-${GIT_BASE}/openstack/swift.git}
@@ -168,8 +184,11 @@ SPICE_BRANCH=${SPICE_BRANCH:-master}
 
 # Nova hypervisor configuration.  We default to libvirt with **kvm** but will
 # drop back to **qemu** if we are unable to load the kvm module.  ``stack.sh`` can
-# also install an **LXC**, **OpenVZ** or **XenAPI** based system.
-VIRT_DRIVER=${VIRT_DRIVER:-libvirt}
+# also install an **LXC**, **OpenVZ** or **XenAPI** based system.  If xenserver-core
+# is installed, the default will be XenAPI
+DEFAULT_VIRT_DRIVER=libvirt
+is_package_installed xenserver-core && DEFAULT_VIRT_DRIVER=xenserver
+VIRT_DRIVER=${VIRT_DRIVER:-$DEFAULT_VIRT_DRIVER}
 case "$VIRT_DRIVER" in
     libvirt)
         LIBVIRT_TYPE=${LIBVIRT_TYPE:-kvm}
@@ -178,6 +197,9 @@ case "$VIRT_DRIVER" in
         else
             LIBVIRT_GROUP=libvirtd
         fi
+        ;;
+    fake)
+        NUMBER_FAKE_NOVA_COMPUTE=${NUMBER_FAKE_NOVA_COMPUTE:-1}
         ;;
     xenserver)
         # Xen config common to nova and neutron
@@ -215,8 +237,8 @@ esac
 # ``IMAGE_URLS`` to be set directly in ``localrc``.
 case "$VIRT_DRIVER" in
     openvz)
-        DEFAULT_IMAGE_NAME=${DEFAULT_IMAGE_NAME:-ubuntu-11.10-x86_64}
-        IMAGE_URLS=${IMAGE_URLS:-"http://download.openvz.org/template/precreated/ubuntu-11.10-x86_64.tar.gz"};;
+        DEFAULT_IMAGE_NAME=${DEFAULT_IMAGE_NAME:-ubuntu-12.04-x86_64}
+        IMAGE_URLS=${IMAGE_URLS:-"http://download.openvz.org/template/precreated/ubuntu-12.04-x86_64.tar.gz"};;
     libvirt)
         case "$LIBVIRT_TYPE" in
             lxc) # the cirros root disk in the uec tarball is empty, so it will not work for lxc
@@ -228,7 +250,8 @@ case "$VIRT_DRIVER" in
         esac
         ;;
     vsphere)
-        IMAGE_URLS="";;
+        DEFAULT_IMAGE_NAME=${DEFAULT_IMAGE_NAME:-debian-2.6.32-i686}
+        IMAGE_URLS=${IMAGE_URLS:-"http://partnerweb.vmware.com/programs/vmdkimage/debian-2.6.32-i686.vmdk"};;
     *) # Default to Cirros with kernel, ramdisk and disk image
         DEFAULT_IMAGE_NAME=${DEFAULT_IMAGE_NAME:-cirros-0.3.1-x86_64-uec}
         IMAGE_URLS=${IMAGE_URLS:-"http://download.cirros-cloud.net/0.3.1/cirros-0.3.1-x86_64-uec.tar.gz"};;
@@ -255,6 +278,9 @@ USE_SCREEN=${SCREEN_DEV:-$USE_SCREEN}
 
 # Set default screen name
 SCREEN_NAME=${SCREEN_NAME:-stack}
+
+# Do not install packages tagged with 'testonly' by default
+INSTALL_TESTONLY_PACKAGES=${INSTALL_TESTONLY_PACKAGES:-False}
 
 # Local variables:
 # mode: shell-script

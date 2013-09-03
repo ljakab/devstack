@@ -12,9 +12,13 @@ Read more at http://devstack.org (built from the gh-pages branch)
 
 IMPORTANT: Be sure to carefully read `stack.sh` and any other scripts you execute before you run them, as they install software and may alter your networking configuration.  We strongly recommend that you run `stack.sh` in a clean and disposable vm when you are first getting started.
 
-# Devstack on Xenserver
+# DevStack on Xenserver
 
 If you would like to use Xenserver as the hypervisor, please refer to the instructions in `./tools/xen/README.md`.
+
+# DevStack on Docker
+
+If you would like to use Docker as the hypervisor, please refer to the instructions in `./tools/docker/README.md`.
 
 # Versions
 
@@ -83,32 +87,51 @@ Example (Qpid):
 
     ENABLED_SERVICES="$ENABLED_SERVICES,-rabbit,-zeromq,qpid"
 
+# Apache Frontend
+
+Apache web server is enabled for wsgi services by setting `APACHE_ENABLED_SERVICES` in your localrc. But remember to enable these services at first as above.
+
+Example:
+    APACHE_ENABLED_SERVICES+=keystone,swift
+
 # Swift
 
-Swift is enabled by default configured with only one replica to avoid being IO/memory intensive on a small vm. When running with only one replica the account, container and object services will run directly in screen. The others services like replicator, updaters or auditor runs in background.
+Swift is disabled by default.  When enabled, it is configured with
+only one replica to avoid being IO/memory intensive on a small
+vm. When running with only one replica the account, container and
+object services will run directly in screen. The others services like
+replicator, updaters or auditor runs in background.
 
-If you would like to disable Swift you can add this to your `localrc` :
+If you would like to enable Swift you can add this to your `localrc` :
 
-    disable_service s-proxy s-object s-container s-account
+    enable_service s-proxy s-object s-container s-account
 
-If you want a minimal Swift install with only Swift and Keystone you can have this instead in your `localrc`:
+If you want a minimal Swift install with only Swift and Keystone you
+can have this instead in your `localrc`:
 
     disable_all_services
     enable_service key mysql s-proxy s-object s-container s-account
 
-If you only want to do some testing of a real normal swift cluster with multiple replicas you can do so by customizing the variable `SWIFT_REPLICAS` in your `localrc` (usually to 3).
+If you only want to do some testing of a real normal swift cluster
+with multiple replicas you can do so by customizing the variable
+`SWIFT_REPLICAS` in your `localrc` (usually to 3).
 
 # Swift S3
 
-If you are enabling `swift3` in `ENABLED_SERVICES` devstack will install the swift3 middleware emulation. Swift will be configured to act as a S3 endpoint for Keystone so effectively replacing the `nova-objectstore`.
+If you are enabling `swift3` in `ENABLED_SERVICES` devstack will
+install the swift3 middleware emulation. Swift will be configured to
+act as a S3 endpoint for Keystone so effectively replacing the
+`nova-objectstore`.
 
-Only Swift proxy server is launched in the screen session all other services are started in background and managed by `swift-init` tool.
+Only Swift proxy server is launched in the screen session all other
+services are started in background and managed by `swift-init` tool.
 
 # Neutron
 
 Basic Setup
 
-In order to enable Neutron a single node setup, you'll need the following settings in your `localrc` :
+In order to enable Neutron a single node setup, you'll need the
+following settings in your `localrc` :
 
     disable_service n-net
     enable_service q-svc
@@ -136,12 +159,55 @@ An example of using the variables in your `localrc` is below:
     Q_AGENT_EXTRA_AGENT_OPTS=(tunnel_type=vxlan vxlan_udp_port=8472)
     Q_SRV_EXTRA_OPTS=(tenant_network_type=vxlan)
 
+devstack also supports configuring the Neutron ML2 plugin. The ML2 plugin can run with the OVS, LinuxBridge, or Hyper-V agents on compute hosts. A simple way to configure the ml2 plugin is shown below:
+
+    # VLAN configuration
+    Q_PLUGIN=ml2
+    ENABLE_TENANT_VLANS=True
+
+    # GRE tunnel configuration
+    Q_PLUGIN=ml2
+    ENABLE_TENANT_TUNNELS=True
+
+    # VXLAN tunnel configuration
+    Q_PLUGIN=ml2
+    Q_ML2_TENANT_NETWORK_TYPE=vxlan
+
+The above will default in devstack to using the OVS on each compute host. To change this, set the `Q_AGENT` variable to the agent you want to run (e.g. linuxbridge).
+
+    Variable Name                    Notes
+    -------------------------------------------------------------------------------------
+    Q_AGENT                          This specifies which agent to run with the ML2 Plugin (either `openvswitch` or `linuxbridge`).
+    Q_ML2_PLUGIN_MECHANISM_DRIVERS   The ML2 MechanismDrivers to load. The default is none. Note, ML2 will work with the OVS and LinuxBridge agents by default.
+    Q_ML2_PLUGIN_TYPE_DRIVERS        The ML2 TypeDrivers to load. Defaults to all available TypeDrivers.
+    Q_ML2_PLUGIN_GRE_TYPE_OPTIONS    GRE TypeDriver options. Defaults to none.
+    Q_ML2_PLUGIN_VXLAN_TYPE_OPTIONS  VXLAN TypeDriver options. Defaults to none.
+    Q_ML2_PLUGIN_VLAN_TYPE_OPTIONS   VLAN TypeDriver options. Defaults to none.
+    Q_AGENT_EXTRA_AGENT_OPTS         Extra configuration options to pass to the OVS or LinuxBridge Agent.
+
+# Heat
+
+Heat is disabled by default. To enable it you'll need the following settings
+in your `localrc` :
+
+    enable_service heat h-api h-api-cfn h-api-cw h-eng
+
+Heat can also run in standalone mode, and be configured to orchestrate
+on an external OpenStack cloud. To launch only Heat in standalone mode
+you'll need the following settings in your `localrc` :
+
+    disable_all_services
+    enable_service rabbit mysql heat h-api h-api-cfn h-api-cw h-eng
+    HEAT_STANDALONE=True
+    KEYSTONE_SERVICE_HOST=...
+    KEYSTONE_AUTH_HOST=...
+
 # Tempest
 
 If tempest has been successfully configured, a basic set of smoke tests can be run as follows:
 
     $ cd /opt/stack/tempest
-    $ nosetests tempest/tests/network/test_network_basic_ops.py
+    $ nosetests tempest/scenario/test_network_basic_ops.py
 
 # Multi-Node Setup
 
@@ -176,15 +242,5 @@ Cells is a new scaling option with a full spec at http://wiki.openstack.org/blue
 To setup a cells environment add the following to your `localrc`:
 
     enable_service n-cell
-    enable_service n-api-meta
-    MULTI_HOST=True
 
-    # The following have not been tested with cells, they may or may not work.
-    disable_service n-obj
-    disable_service cinder
-    disable_service c-sch
-    disable_service c-api
-    disable_service c-vol
-    disable_service n-xvnc
-
-Be aware that there are some features currently missing in cells, one notable one being security groups.
+Be aware that there are some features currently missing in cells, one notable one being security groups.  The exercises have been patched to disable functionality not supported by cells.
