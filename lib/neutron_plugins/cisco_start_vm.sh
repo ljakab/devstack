@@ -2,7 +2,7 @@
 
 :<<EOF
    1. Create a network profile
-$neutron network-profile-create PROFILE_NAME vlan --segment_range 400-499
+$neutron cisco-network-profile-create PROFILE_NAME vlan --segment_range 400-499
        * segment type can be of type vlan and vxlan.
    2. Create a network
 $neutron net-create NETWORK_NAME --n1kv:profile_id PROFILE_ID
@@ -39,7 +39,7 @@ policy_id=''
 image_id=''
 port_id=''
 function get_np_id() {
-    np_id=$(neutron network-profile-list | awk -v np_name=$NETWORK_PROFILE_NAME '(NR > 3) {if ($4 == np_name) {print $2;}}')
+    np_id=$(neutron cisco-network-profile-list | awk -v np_name=$NETWORK_PROFILE_NAME '(NR > 3) {if ($4 == np_name) {print $2;}}')
 }
 
 function get_net_id() {
@@ -51,9 +51,9 @@ function get_subnet_id() {
 }
 
 function get_policy_id() {
-    policy_id=$(neutron policy-profile-list | awk -v policy_name=$POLICY_PROFILE_NAME '(NR > 3) {if ($4 == policy_name) {print $2;}}')
+    policy_id=$(neutron cisco-policy-profile-list | awk -v policy_name=$POLICY_PROFILE_NAME '(NR > 3) {if ($4 == policy_name) {print $2;}}')
     if [[ $policy_id == '' ]]; then
-        policy_id=$(neutron policy-profile-list | awk '(NR == 4) {print $2;}')
+        policy_id=$(neutron cisco-policy-profile-list | awk '(NR == 4) {print $2;}')
     fi
 }
 
@@ -69,8 +69,8 @@ fi
 
 get_np_id
 if [[ $np_id == '' ]]; then
-    echo "neutron network-profile-create $NETWORK_PROFILE_NAME vlan --segment_range $VLAN_RANGE"
-    neutron network-profile-create $NETWORK_PROFILE_NAME vlan --segment_range $VLAN_RANGE
+    echo "neutron cisco-network-profile-create $NETWORK_PROFILE_NAME vlan --segment_range $VLAN_RANGE"
+    neutron cisco-network-profile-create $NETWORK_PROFILE_NAME vlan --segment_range $VLAN_RANGE
     get_np_id
     if [[ $np_id == '' ]]; then
         exit 1

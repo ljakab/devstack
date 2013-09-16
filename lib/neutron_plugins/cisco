@@ -1105,7 +1105,7 @@ function neutron_plugin_configure_service() {
         cisco_cfg_file=/$Q_PLUGIN_CONF_FILE
     fi
 
-    # Setup the [PLUGINS] section
+    # Setup the [CISCO_PLUGINS] section
     if [[ ${#Q_CISCO_PLUGIN_SUBPLUGINS[@]} > 2 ]]; then
         die $LINENO "At most two subplugins are supported."
     fi
@@ -1115,14 +1115,14 @@ function neutron_plugin_configure_service() {
     fi
 
     # Setup the subplugins
-    inicomment $cisco_cfg_file PLUGINS nexus_plugin
-    inicomment $cisco_cfg_file PLUGINS vswitch_plugin
+    inicomment $cisco_cfg_file CISCO_PLUGINS nexus_plugin
+    inicomment $cisco_cfg_file CISCO_PLUGINS vswitch_plugin
     inicomment $cisco_cfg_file CISCO_TEST host
     for subplugin in ${Q_CISCO_PLUGIN_SUBPLUGINS[@]}; do
         case $subplugin in
-            nexus) iniset $cisco_cfg_file PLUGINS nexus_plugin neutron.plugins.cisco.nexus.cisco_nexus_plugin_v2.NexusPlugin;;
-            openvswitch) iniset $cisco_cfg_file PLUGINS vswitch_plugin neutron.plugins.openvswitch.ovs_neutron_plugin.OVSNeutronPluginV2;;
-            n1kv) iniset $cisco_cfg_file PLUGINS vswitch_plugin neutron.plugins.cisco.n1kv.n1kv_neutron_plugin.N1kvNeutronPluginV2;;
+            nexus) iniset $cisco_cfg_file CISCO_PLUGINS nexus_plugin neutron.plugins.cisco.nexus.cisco_nexus_plugin_v2.NexusPlugin;;
+            openvswitch) iniset $cisco_cfg_file CISCO_PLUGINS vswitch_plugin neutron.plugins.openvswitch.ovs_neutron_plugin.OVSNeutronPluginV2;;
+            n1kv) iniset $cisco_cfg_file CISCO_PLUGINS vswitch_plugin neutron.plugins.cisco.n1kv.n1kv_neutron_plugin.N1kvNeutronPluginV2;;
             *) die $LINENO "Unsupported cisco subplugin: $subplugin";;
         esac
     done
