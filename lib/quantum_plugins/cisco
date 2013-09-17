@@ -568,16 +568,13 @@ function _configure_vsm() {
 	send "feature network-segmentation-manager\n" 
 	expect -re ".*# "
 
-	send "fabric-network test\n" 
-	expect -re ".*# "
-
-        send "exit\n"
-	expect -re ".*# "
-
         send "port-profile test-profile\n"
 	expect -re ".*# "
 
         send "no shut\n"
+	expect -re ".*# "
+
+        send "state enabled\n"
 	expect -re ".*# "
 
         send "publish port-profile\n"

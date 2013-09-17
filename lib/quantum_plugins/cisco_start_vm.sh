@@ -2,8 +2,9 @@
 
 :<<EOF
    1. Create a network profile
-$quantum network-profile-create PROFILE_NAME vlan --segment_range 400-499
+$quantum cisco-network-profile-create PROFILE_NAME vlan --segment_range 400-499 --physical_network PHYSICAL_NETWORK_NAME
        * segment type can be of type vlan and vxlan.
+       * physical_network option required only for segment types VLAN
    2. Create a network
 $quantum net-create NETWORK_NAME --n1kv:profile_id PROFILE_ID
        * The above PROFILE_ID is that of the network profile created in step 1.
@@ -12,10 +13,10 @@ $quantum subnet-create NETWORK_NAME 10.0.0.1/24 --name SUBNET_NAME
        * NETWORK_NAME corresponds to the network created in step 2.
    4. Create a port
 $quantum port-create NETWORK_NAME --n1kv:profile_id PROFILE_ID
-       * The above PROFILE_ID is that of the policy profile received from VSM. You can get the UUID from the output of 'quantum policy-profile-list'.
+       * The above PROFILE_ID is that of the policy profile received from VSM. You can get the UUID from the output of 'quantum cisco-policy-profile-list'.
        * Remember the ip-address assigned to this port. Use this ip address to configure your VM in step 6.
    5. Create a VM
-$nova boot --image IMAGE_ID --flavor 1 --nic net-id=NETWORK_ID --meta port_id=PORT_ID VM_NAME
+$nova boot --image IMAGE_ID --flavor 1 --nic port-id=PORT_ID VM_NAME
        * IMAGE_ID can be found out by executing "nova image-list" command. Just pick the first image id.
        * NETWORK_ID is the network uuid from step 2
        * PORT_ID is the port uuid from step 5
@@ -39,7 +40,7 @@ policy_id=''
 image_id=''
 port_id=''
 function get_np_id() {
-    np_id=$(quantum network-profile-list | awk -v np_name=$NETWORK_PROFILE_NAME '(NR > 3) {if ($4 == np_name) {print $2;}}')
+    np_id=$(quantum cisco-network-profile-list | awk -v np_name=$NETWORK_PROFILE_NAME '(NR > 3) {if ($4 == np_name) {print $2;}}')
 }
 
 function get_net_id() {
@@ -51,9 +52,9 @@ function get_subnet_id() {
 }
 
 function get_policy_id() {
-    policy_id=$(quantum policy-profile-list | awk -v policy_name=$POLICY_PROFILE_NAME '(NR > 3) {if ($4 == policy_name) {print $2;}}')
+    policy_id=$(quantum cisco-policy-profile-list | awk -v policy_name=$POLICY_PROFILE_NAME '(NR > 3) {if ($4 == policy_name) {print $2;}}')
     if [[ $policy_id == '' ]]; then
-        policy_id=$(quantum policy-profile-list | awk '(NR == 4) {print $2;}')
+        policy_id=$(quantum cisco-policy-profile-list | awk '(NR == 4) {print $2;}')
     fi
 }
 
@@ -69,8 +70,8 @@ fi
 
 get_np_id
 if [[ $np_id == '' ]]; then
-    echo "quantum network-profile-create $NETWORK_PROFILE_NAME vlan --segment_range $VLAN_RANGE"
-    quantum network-profile-create $NETWORK_PROFILE_NAME vlan --segment_range $VLAN_RANGE
+    echo "quantum cisco-network-profile-create $NETWORK_PROFILE_NAME vlan --segment_range $VLAN_RANGE --physical_network phyname"
+    quantum cisco-network-profile-create $NETWORK_PROFILE_NAME vlan --segment_range $VLAN_RANGE --physical_network phyname
     get_np_id
     if [[ $np_id == '' ]]; then
         exit 1
@@ -105,6 +106,6 @@ fi
 
 if [[ $port_id != '' ]]; then
     rno=$RANDOM
-    echo "nova boot --image $image_id --flavor 1 --nic net-id=$net_id --meta port_id=$port_id VM_$rno"
-    nova boot --image $image_id --flavor 1 --nic net-id=$net_id --meta port_id=$port_id VM_$rno
+    echo "nova boot --image $image_id --flavor 1 --nic port-id=$port_id VM_$rno"
+    nova boot --image $image_id --flavor 1 --nic port_id=$port-id VM_$rno
 fi
