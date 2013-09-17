@@ -2,7 +2,7 @@
 
 :<<EOF
    1. Create a network profile
-$neutron cisco-network-profile-create PROFILE_NAME vlan --segment_range 400-499
+$neutron cisco-network-profile-create PROFILE_NAME vlan --segment_range 400-499 --physical_network PHYSICAL_NETWORK_NAME
        * segment type can be of type vlan and vxlan.
    2. Create a network
 $neutron net-create NETWORK_NAME --n1kv:profile_id PROFILE_ID
@@ -15,7 +15,7 @@ $neutron port-create NETWORK_NAME --n1kv:profile_id PROFILE_ID
        * The above PROFILE_ID is that of the policy profile received from VSM. You can get the UUID from the output of 'neutron policy-profile-list'.
        * Remember the ip-address assigned to this port. Use this ip address to configure your VM in step 6.
    5. Create a VM
-$nova boot --image IMAGE_ID --flavor 1 --nic net-id=NETWORK_ID --meta port_id=PORT_ID VM_NAME
+$nova boot --image IMAGE_ID --flavor 1 --nic port-id=PORT_ID VM_NAME
        * IMAGE_ID can be found out by executing "nova image-list" command. Just pick the first image id.
        * NETWORK_ID is the network uuid from step 2
        * PORT_ID is the port uuid from step 5
@@ -69,8 +69,8 @@ fi
 
 get_np_id
 if [[ $np_id == '' ]]; then
-    echo "neutron cisco-network-profile-create $NETWORK_PROFILE_NAME vlan --segment_range $VLAN_RANGE"
-    neutron cisco-network-profile-create $NETWORK_PROFILE_NAME vlan --segment_range $VLAN_RANGE
+    echo "neutron cisco-network-profile-create $NETWORK_PROFILE_NAME vlan --segment_range $VLAN_RANGE --physical_network phyname"
+    neutron cisco-network-profile-create $NETWORK_PROFILE_NAME vlan --segment_range $VLAN_RANGE --physical_network phyname
     get_np_id
     if [[ $np_id == '' ]]; then
         exit 1
