@@ -138,9 +138,12 @@ BM_FLAVOR_ARCH=${BM_FLAVOR_ARCH:-$BM_CPU_ARCH}
 BM_IMAGE_BUILD_DIR=${BM_IMAGE_BUILD_DIR:-$DEST/diskimage-builder}
 BM_POSEUR_DIR=${BM_POSEUR_DIR:-$DEST/bm_poseur}
 
-BM_HOST_CURRENT_KERNEL=$(uname -r)
-BM_DEPLOY_RAMDISK=${BM_DEPLOY_RAMDISK:-bm-deploy-$BM_HOST_CURRENT_KERNEL-initrd}
-BM_DEPLOY_KERNEL=${BM_DEPLOY_KERNEL:-bm-deploy-$BM_HOST_CURRENT_KERNEL-vmlinuz}
+# Use DIB to create deploy ramdisk and kernel.
+BM_BUILD_DEPLOY_RAMDISK=`trueorfalse True $BM_BUILD_DEPLOY_RAMDISK`
+# If not use DIB, these files are used as deploy ramdisk/kernel.
+# (The value must be a relative path from $TOP_DIR/files/)
+BM_DEPLOY_RAMDISK=${BM_DEPLOY_RAMDISK:-}
+BM_DEPLOY_KERNEL=${BM_DEPLOY_KERNEL:-}
 
 # If you need to add any extra flavors to the deploy ramdisk image
 # eg, specific network drivers, specify them here
@@ -212,7 +215,16 @@ function configure_baremetal_nova_dirs() {
     # ensure /tftpboot is prepared
     sudo mkdir -p /tftpboot
     sudo mkdir -p /tftpboot/pxelinux.cfg
-    sudo cp /usr/lib/syslinux/pxelinux.0 /tftpboot/
+
+    PXEBIN=/usr/share/syslinux/pxelinux.0
+    if [ ! -f $PXEBIN ]; then
+        PXEBIN=/usr/lib/syslinux/pxelinux.0
+        if [ ! -f $PXEBIN ]; then
+            die $LINENO "pxelinux.0 (from SYSLINUX) not found."
+        fi
+    fi
+
+    sudo cp $PXEBIN /tftpboot/
     sudo chown -R $STACK_USER:$LIBVIRT_GROUP /tftpboot
 
     # ensure $NOVA_STATE_PATH/baremetal is prepared
@@ -233,13 +245,13 @@ function configure_baremetal_nova_dirs() {
 function upload_baremetal_deploy() {
     token=$1
 
-    if [ ! -e $TOP_DIR/files/$BM_DEPLOY_KERNEL -a -e /boot/vmlinuz-$BM_HOST_CURRENT_KERNEL ]; then
-        sudo cp /boot/vmlinuz-$BM_HOST_CURRENT_KERNEL $TOP_DIR/files/$BM_DEPLOY_KERNEL
-        sudo chmod a+r $TOP_DIR/files/$BM_DEPLOY_KERNEL
-    fi
-    if [ ! -e $TOP_DIR/files/$BM_DEPLOY_RAMDISK ]; then
-       $BM_IMAGE_BUILD_DIR/bin/ramdisk-image-create $BM_DEPLOY_FLAVOR deploy \
-           -o $TOP_DIR/files/$BM_DEPLOY_RAMDISK -k $BM_HOST_CURRENT_KERNEL
+    if [ "$BM_BUILD_DEPLOY_RAMDISK" = "True" ]; then
+        BM_DEPLOY_KERNEL=bm-deploy.kernel
+        BM_DEPLOY_RAMDISK=bm-deploy.initramfs
+        if [ ! -e "$TOP_DIR/files/$BM_DEPLOY_KERNEL" -o ! -e "$TOP_DIR/files/$BM_DEPLOY_RAMDISK" ]; then
+            $BM_IMAGE_BUILD_DIR/bin/ramdisk-image-create $BM_DEPLOY_FLAVOR deploy \
+                -o $TOP_DIR/files/bm-deploy
+        fi
     fi
 
     # load them into glance
@@ -288,7 +300,7 @@ function extract_and_upload_k_and_r_from_image() {
     out=$($BM_IMAGE_BUILD_DIR/bin/disk-image-get-kernel \
             -x -d $TOP_DIR/files -o bm-deploy -i $file)
     if [ $? -ne 0 ]; then
-        die "Failed to get kernel and ramdisk from $file"
+        die $LINENO "Failed to get kernel and ramdisk from $file"
     fi
     XTRACE=$(set +o | grep xtrace)
     set +o xtrace
@@ -436,9 +448,9 @@ function add_baremetal_node() {
        "$BM_FLAVOR_ROOT_DISK" \
        "$mac_1" \
        | grep ' id ' | get_field 2 )
-    [ $? -eq 0 ] || [ "$id" ] || die "Error adding baremetal node"
+    [ $? -eq 0 ] || [ "$id" ] || die $LINENO "Error adding baremetal node"
     id2=$(nova baremetal-interface-add "$id" "$mac_2" )
-    [ $? -eq 0 ] || [ "$id2" ] || die "Error adding interface to barmetal node $id"
+    [ $? -eq 0 ] || [ "$id2" ] || die $LINENO "Error adding interface to barmetal node $id"
 }
 
 

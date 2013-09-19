@@ -55,11 +55,17 @@ fi
 # swift data. Set ``SWIFT_LOOPBACK_DISK_SIZE`` to the disk size in
 # kilobytes.
 # Default is 1 gigabyte.
-SWIFT_LOOPBACK_DISK_SIZE=${SWIFT_LOOPBACK_DISK_SIZE:-1000000}
+SWIFT_LOOPBACK_DISK_SIZE_DEFAULT=1048576
+# if tempest enabled the default size is 4 Gigabyte.
+if is_service_enabled tempest; then
+    SWIFT_LOOPBACK_DISK_SIZE_DEFAULT=${SWIFT_LOOPBACK_DISK_SIZE:-4194304}
+fi
+
+SWIFT_LOOPBACK_DISK_SIZE=${SWIFT_LOOPBACK_DISK_SIZE:-$SWIFT_LOOPBACK_DISK_SIZE_DEFAULT}
 
 # Set ``SWIFT_EXTRAS_MIDDLEWARE`` to extras middlewares.
-# Default is ``staticweb, tempurl, bulk, formpost``
-SWIFT_EXTRAS_MIDDLEWARE=${SWIFT_EXTRAS_MIDDLEWARE:-tempurl formpost staticweb bulk}
+# Default is ``staticweb, tempurl, formpost``
+SWIFT_EXTRAS_MIDDLEWARE=${SWIFT_EXTRAS_MIDDLEWARE:-tempurl formpost staticweb}
 
 # The ring uses a configurable number of bits from a path’s MD5 hash as
 # a partition index that designates a device. The number of bits kept
@@ -132,6 +138,7 @@ function _config_swift_apache_wsgi() {
         s/%PORT%/$proxy_port/g;
         s/%SERVICENAME%/proxy-server/g;
         s/%APACHE_NAME%/${APACHE_NAME}/g;
+        s/%USER%/${STACK_USER}/g;
     " -i ${apache_vhost_dir}/proxy-server
 
     sudo cp ${SWIFT_DIR}/examples/wsgi/proxy-server.wsgi.template ${SWIFT_APACHE_WSGI_DIR}/proxy-server.wsgi
@@ -152,6 +159,7 @@ function _config_swift_apache_wsgi() {
             s/%PORT%/$object_port/g;
             s/%SERVICENAME%/object-server-${node_number}/g;
             s/%APACHE_NAME%/${APACHE_NAME}/g;
+            s/%USER%/${STACK_USER}/g;
         " -i ${apache_vhost_dir}/object-server-${node_number}
         ! is_fedora && sudo a2ensite object-server-${node_number}
 
@@ -167,6 +175,7 @@ function _config_swift_apache_wsgi() {
             s/%PORT%/$container_port/g;
             s/%SERVICENAME%/container-server-${node_number}/g;
             s/%APACHE_NAME%/${APACHE_NAME}/g;
+            s/%USER%/${STACK_USER}/g;
         " -i ${apache_vhost_dir}/container-server-${node_number}
         ! is_fedora && sudo a2ensite container-server-${node_number}
 
@@ -182,6 +191,7 @@ function _config_swift_apache_wsgi() {
             s/%PORT%/$account_port/g;
             s/%SERVICENAME%/account-server-${node_number}/g;
             s/%APACHE_NAME%/${APACHE_NAME}/g;
+            s/%USER%/${STACK_USER}/g;
         " -i ${apache_vhost_dir}/account-server-${node_number}
         ! is_fedora && sudo a2ensite account-server-${node_number}
 
@@ -192,9 +202,6 @@ function _config_swift_apache_wsgi() {
         " -i ${SWIFT_APACHE_WSGI_DIR}/account-server-${node_number}.wsgi
 
     done
-
-    # run apache server as stack user
-    change_apache_user_group ${STACK_USER}
 
     # WSGI isn't enabled by default, enable it
     ! is_fedora && sudo a2enmod wsgi
@@ -464,7 +471,7 @@ function create_swift_accounts() {
 
     SWIFT_USER=$(keystone user-create --name=swift --pass="$SERVICE_PASSWORD" \
         --tenant_id $SERVICE_TENANT --email=swift@example.com | grep " id " | get_field 2)
-    keystone user-role-add --tenant_id $SERVICE_TENANT --user_id $SWIFT_USER --role_id $ADMIN_ROLE
+    keystone user-role-add --tenant-id $SERVICE_TENANT --user-id $SWIFT_USER --role-id $ADMIN_ROLE
 
     if [[ "$KEYSTONE_CATALOG_BACKEND" = 'sql' ]]; then
         SWIFT_SERVICE=$(keystone service-create --name=swift --type="object-store" \
@@ -479,14 +486,14 @@ function create_swift_accounts() {
 
     SWIFT_TENANT_TEST1=$(keystone tenant-create --name=swifttenanttest1 | grep " id " | get_field 2)
     SWIFT_USER_TEST1=$(keystone user-create --name=swiftusertest1 --pass=testing --email=test@example.com | grep " id " | get_field 2)
-    keystone user-role-add --user_id $SWIFT_USER_TEST1 --role_id $ADMIN_ROLE --tenant_id $SWIFT_TENANT_TEST1
+    keystone user-role-add --user-id $SWIFT_USER_TEST1 --role-id $ADMIN_ROLE --tenant-id $SWIFT_TENANT_TEST1
 
     SWIFT_USER_TEST3=$(keystone user-create --name=swiftusertest3 --pass=testing3 --email=test3@example.com | grep " id " | get_field 2)
-    keystone user-role-add --user_id $SWIFT_USER_TEST3 --role_id $ANOTHER_ROLE --tenant_id $SWIFT_TENANT_TEST1
+    keystone user-role-add --user-id $SWIFT_USER_TEST3 --role-id $ANOTHER_ROLE --tenant-id $SWIFT_TENANT_TEST1
 
     SWIFT_TENANT_TEST2=$(keystone tenant-create --name=swifttenanttest2 | grep " id " | get_field 2)
     SWIFT_USER_TEST2=$(keystone user-create --name=swiftusertest2 --pass=testing2 --email=test2@example.com | grep " id " | get_field 2)
-    keystone user-role-add --user_id $SWIFT_USER_TEST2 --role_id $ADMIN_ROLE --tenant_id $SWIFT_TENANT_TEST2
+    keystone user-role-add --user-id $SWIFT_USER_TEST2 --role-id $ADMIN_ROLE --tenant-id $SWIFT_TENANT_TEST2
 }
 
 # init_swift() - Initialize rings
@@ -552,10 +559,6 @@ function start_swift() {
     fi
 
     if is_apache_enabled_service swift; then
-        # Make sure the apache lock dir is owned by $STACK_USER
-        # for running apache server to avoid failure of restarting
-        # apache server due to permission problem.
-        sudo chown -R $STACK_USER /var/run/lock/$APACHE_NAME
         restart_apache_server
         swift-init --run-dir=${SWIFT_DATA_DIR}/run rest start
         screen_it s-proxy "cd $SWIFT_DIR && sudo tail -f /var/log/$APACHE_NAME/proxy-server"

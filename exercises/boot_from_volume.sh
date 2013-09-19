@@ -44,6 +44,9 @@ source $TOP_DIR/exerciserc
 # the exercise is skipped
 is_service_enabled cinder || exit 55
 
+# Also skip if the hypervisor is Docker
+[[ "$VIRT_DRIVER" == "docker" ]] && exit 55
+
 # Instance type to create
 DEFAULT_INSTANCE_TYPE=${DEFAULT_INSTANCE_TYPE:-m1.tiny}
 
@@ -174,7 +177,8 @@ if ! timeout $ACTIVE_TIMEOUT sh -c "while ! nova show $VM_UUID | grep status | g
 fi
 
 # Get the instance IP
-IP=$(nova show $VM_UUID | grep "$PRIVATE_NETWORK_NAME" | get_field 2)
+IP=$(get_instance_ip $VM_UUID $PRIVATE_NETWORK_NAME)
+
 die_if_not_set $LINENO IP "Failure retrieving IP address"
 
 # Private IPs can be pinged in single node deployments

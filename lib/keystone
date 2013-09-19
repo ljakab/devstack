@@ -44,6 +44,12 @@ KEYSTONE_CATALOG=$KEYSTONE_CONF_DIR/default_catalog.templates
 # Select the backend for Tokens
 KEYSTONE_TOKEN_BACKEND=${KEYSTONE_TOKEN_BACKEND:-sql}
 
+# Select the backend for Identity
+KEYSTONE_IDENTITY_BACKEND=${KEYSTONE_IDENTITY_BACKEND:-sql}
+
+# Select the backend for Assignment
+KEYSTONE_ASSIGNMENT_BACKEND=${KEYSTONE_ASSIGNMENT_BACKEND:-sql}
+
 # Select Keystone's token format
 # Choose from 'UUID' and 'PKI'
 KEYSTONE_TOKEN_FORMAT=${KEYSTONE_TOKEN_FORMAT:-PKI}
@@ -63,10 +69,14 @@ KEYSTONE_SERVICE_PROTOCOL=${KEYSTONE_SERVICE_PROTOCOL:-$SERVICE_PROTOCOL}
 # Set the tenant for service accounts in Keystone
 SERVICE_TENANT_NAME=${SERVICE_TENANT_NAME:-service}
 
+# valid identity backends as per dir keystone/identity/backends
+KEYSTONE_VALID_IDENTITY_BACKENDS=kvs,ldap,pam,sql
+
+# valid assignment backends as per dir keystone/identity/backends
+KEYSTONE_VALID_ASSIGNMENT_BACKENDS=kvs,ldap,sql
 
 # Functions
 # ---------
-
 # cleanup_keystone() - Remove residual data files, anything left over from previous
 # runs that a clean run would need to clean up
 function cleanup_keystone() {
@@ -116,8 +126,14 @@ function configure_keystone() {
         iniset $KEYSTONE_CONF DEFAULT member_role_name "_member_"
     fi
 
-    if [[  "$KEYSTONE_IDENTITY_BACKEND" == "ldap"  ]]; then
-        iniset $KEYSTONE_CONF identity driver "keystone.identity.backends.ldap.Identity"
+    # check if identity backend is valid
+    if [[ "$KEYSTONE_VALID_IDENTITY_BACKENDS" =~ "$KEYSTONE_IDENTITY_BACKEND" ]]; then
+        iniset $KEYSTONE_CONF identity driver "keystone.identity.backends.$KEYSTONE_IDENTITY_BACKEND.Identity"
+    fi
+
+    # check if assignment backend is valid
+    if [[ "$KEYSTONE_VALID_ASSIGNMENT_BACKENDS" =~ "$KEYSTONE_ASSIGNMENT_BACKEND" ]]; then
+        iniset $KEYSTONE_CONF assignment driver "keystone.assignment.backends.$KEYSTONE_ASSIGNMENT_BACKEND.Assignment"
     fi
 
     # Set the URL advertised in the ``versions`` structure returned by the '/' route
@@ -217,9 +233,9 @@ create_keystone_accounts() {
         --name admin \
         | grep " id " | get_field 2)
     keystone user-role-add \
-        --user_id $ADMIN_USER \
-        --role_id $ADMIN_ROLE \
-        --tenant_id $ADMIN_TENANT
+        --user-id $ADMIN_USER \
+        --role-id $ADMIN_ROLE \
+        --tenant-id $ADMIN_TENANT
 
     # service
     SERVICE_TENANT=$(keystone tenant-create \
@@ -244,10 +260,10 @@ create_keystone_accounts() {
         --pass "$ADMIN_PASSWORD" \
         --email demo@example.com \
         | grep " id " | get_field 2)
-    keystone user-role-add --user_id $DEMO_USER --role_id $MEMBER_ROLE --tenant_id $DEMO_TENANT
-    keystone user-role-add --user_id $ADMIN_USER --role_id $ADMIN_ROLE --tenant_id $DEMO_TENANT
-    keystone user-role-add --user_id $DEMO_USER --role_id $ANOTHER_ROLE --tenant_id $DEMO_TENANT
-    keystone user-role-add --user_id $DEMO_USER --role_id $MEMBER_ROLE --tenant_id $INVIS_TENANT
+    keystone user-role-add --user-id $DEMO_USER --role-id $MEMBER_ROLE --tenant-id $DEMO_TENANT
+    keystone user-role-add --user-id $ADMIN_USER --role-id $ADMIN_ROLE --tenant-id $DEMO_TENANT
+    keystone user-role-add --user-id $DEMO_USER --role-id $ANOTHER_ROLE --tenant-id $DEMO_TENANT
+    keystone user-role-add --user-id $DEMO_USER --role-id $MEMBER_ROLE --tenant-id $INVIS_TENANT
 
     # Keystone
     if [[ "$KEYSTONE_CATALOG_BACKEND" = 'sql' ]]; then
@@ -289,6 +305,7 @@ function init_keystone() {
 function install_keystoneclient() {
     git_clone $KEYSTONECLIENT_REPO $KEYSTONECLIENT_DIR $KEYSTONECLIENT_BRANCH
     setup_develop $KEYSTONECLIENT_DIR
+    sudo install -D -m 0644 -o $STACK_USER {$KEYSTONECLIENT_DIR/tools/,/etc/bash_completion.d/}keystone.bash_completion
 }
 
 # install_keystone() - Collect source and prepare

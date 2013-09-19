@@ -50,7 +50,7 @@ function _horizon_config_set() {
         if [ -n "$line" ]; then
             sed -i -e "/^$section/,/^}/ s/^\( *'$option'\) *:.*$/\1: $value,/" $file
         else
-            sed -i -e "/^$section/ a\n    '$option': $value,\n" $file
+            sed -i -e "/^$section/a\    '$option': $value," $file
         fi
     else
         echo -e "\n\n$section = {\n    '$option': $value,\n}" >> $file
@@ -96,6 +96,16 @@ function init_horizon() {
         _horizon_config_set $local_settings OPENSTACK_NEUTRON_NETWORK enable_lb True
     fi
 
+    # enable firewall dashboard in case service is enabled
+    if is_service_enabled q-fwaas; then
+        _horizon_config_set $local_settings OPENSTACK_NEUTRON_NETWORK enable_firewall True
+    fi
+
+    # enable VPN dashboard in case service is enabled
+    if is_service_enabled q-vpn; then
+        _horizon_config_set $local_settings OPENSTACK_NEUTRON_NETWORK enable_vpn True
+    fi
+
     # Initialize the horizon database (it stores sessions and notices shown to
     # users).  The user system is external (keystone).
     cd $HORIZON_DIR
@@ -106,13 +116,13 @@ function init_horizon() {
     sudo mkdir -p $HORIZON_DIR/.blackhole
 
     HORIZON_REQUIRE=''
-    local horizon_conf=/etc/$APACHE_NAME/$APACHE_CONF_DIR/horizon
+    local horizon_conf=/etc/$APACHE_NAME/$APACHE_CONF_DIR/horizon.conf
     if is_ubuntu; then
         # Clean up the old config name
         sudo rm -f /etc/apache2/sites-enabled/000-default
         # Be a good citizen and use the distro tools here
         sudo touch $horizon_conf
-        sudo a2ensite horizon
+        sudo a2ensite horizon.conf
         # WSGI isn't enabled by default, enable it
         sudo a2enmod wsgi
     elif is_fedora; then

@@ -41,6 +41,9 @@ fi
 # Import exercise configuration
 source $TOP_DIR/exerciserc
 
+# Skip if the hypervisor is Docker
+[[ "$VIRT_DRIVER" == "docker" ]] && exit 55
+
 # Instance type to create
 DEFAULT_INSTANCE_TYPE=${DEFAULT_INSTANCE_TYPE:-m1.tiny}
 
@@ -129,7 +132,8 @@ else
     # Allocate floating address
     FLOATING_IP=`euca-allocate-address | cut -f2`
     die_if_not_set $LINENO FLOATING_IP "Failure allocating floating IP"
-
+    # describe all instances at this moment
+    euca-describe-instances
     # Associate floating address
     euca-associate-address -i $INSTANCE $FLOATING_IP || \
         die $LINENO "Failure associating address $FLOATING_IP to $INSTANCE"

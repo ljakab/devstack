@@ -24,6 +24,7 @@
 # ``DEFAULT_INSTANCE_TYPE``
 # ``DEFAULT_INSTANCE_USER``
 # ``CINDER_MULTI_LVM_BACKEND``
+# ``HEAT_CREATE_TEST_IMAGE``
 # ``stack.sh`` calls the entry points in this order:
 #
 # install_tempest
@@ -201,6 +202,7 @@ function configure_tempest() {
     mkdir -p $TEMPEST_STATE_PATH
     iniset $TEMPEST_CONF DEFAULT use_stderr False
     iniset $TEMPEST_CONF DEFAULT log_file tempest.log
+    iniset $TEMPEST_CONF DEFAULT debug True
 
     # Timeouts
     iniset $TEMPEST_CONF compute build_timeout $BUILD_TIMEOUT
@@ -247,14 +249,6 @@ function configure_tempest() {
     iniset $TEMPEST_CONF compute live_migration_available ${LIVE_MIGRATION_AVAILABLE:-False}
     iniset $TEMPEST_CONF compute use_block_migration_for_live_migration ${USE_BLOCK_MIGRATION_FOR_LIVE_MIGRATION:-False}
 
-    # Whitebox
-    iniset $TEMPEST_CONF whitebox source_dir $NOVA_SOURCE_DIR
-    iniset $TEMPEST_CONF whitebox bin_dir $NOVA_BIN_DIR
-    # TODO(jaypipes): Create the key file here... right now, no whitebox
-    # tests actually use a key.
-    iniset $TEMPEST_CONF whitebox path_to_private_key $TEMPEST_DIR/id_rsa
-    iniset $TEMPEST_CONF whitebox db_uri $BASE_SQL_CONN/nova
-
     # Compute admin
     iniset $TEMPEST_CONF "compute-admin" password "$password" # DEPRECATED
 
@@ -271,10 +265,22 @@ function configure_tempest() {
     iniset $TEMPEST_CONF boto http_socket_timeout 30
     iniset $TEMPEST_CONF boto ssh_user ${DEFAULT_INSTANCE_USER:-cirros}
 
+    # Orchestration test image
+    if [ $HEAT_CREATE_TEST_IMAGE == "True" ]; then
+        disk_image_create /usr/share/tripleo-image-elements "vm fedora heat-cfntools" "i386" "fedora-vm-heat-cfntools-tempest"
+        iniset $TEMPEST_CONF orchestration image_ref "fedora-vm-heat-cfntools-tempest"
+    fi
+
     # Scenario
     iniset $TEMPEST_CONF scenario img_dir "$FILES/images/cirros-0.3.1-x86_64-uec"
 
+    # Large Ops Number
+    iniset $TEMPEST_CONF scenario large_ops_number ${TEMPEST_LARGE_OPS_NUMBER:-0}
+
     # Volume
+    if is_service_enabled c-bak; then
+        iniset $TEMPEST_CONF volume volume_backup_enabled "True"
+    fi
     CINDER_MULTI_LVM_BACKEND=$(trueorfalse False $CINDER_MULTI_LVM_BACKEND)
     if [ $CINDER_MULTI_LVM_BACKEND == "True" ]; then
         iniset $TEMPEST_CONF volume multi_backend_enabled "True"

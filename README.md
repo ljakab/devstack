@@ -12,9 +12,13 @@ Read more at http://devstack.org (built from the gh-pages branch)
 
 IMPORTANT: Be sure to carefully read `stack.sh` and any other scripts you execute before you run them, as they install software and may alter your networking configuration.  We strongly recommend that you run `stack.sh` in a clean and disposable vm when you are first getting started.
 
-# Devstack on Xenserver
+# DevStack on Xenserver
 
 If you would like to use Xenserver as the hypervisor, please refer to the instructions in `./tools/xen/README.md`.
+
+# DevStack on Docker
+
+If you would like to use Docker as the hypervisor, please refer to the instructions in `./tools/docker/README.md`.
 
 # Versions
 
@@ -181,12 +185,29 @@ The above will default in devstack to using the OVS on each compute host. To cha
     Q_ML2_PLUGIN_VLAN_TYPE_OPTIONS   VLAN TypeDriver options. Defaults to none.
     Q_AGENT_EXTRA_AGENT_OPTS         Extra configuration options to pass to the OVS or LinuxBridge Agent.
 
+# Heat
+
+Heat is disabled by default. To enable it you'll need the following settings
+in your `localrc` :
+
+    enable_service heat h-api h-api-cfn h-api-cw h-eng
+
+Heat can also run in standalone mode, and be configured to orchestrate
+on an external OpenStack cloud. To launch only Heat in standalone mode
+you'll need the following settings in your `localrc` :
+
+    disable_all_services
+    enable_service rabbit mysql heat h-api h-api-cfn h-api-cw h-eng
+    HEAT_STANDALONE=True
+    KEYSTONE_SERVICE_HOST=...
+    KEYSTONE_AUTH_HOST=...
+
 # Tempest
 
 If tempest has been successfully configured, a basic set of smoke tests can be run as follows:
 
     $ cd /opt/stack/tempest
-    $ nosetests tempest/tests/network/test_network_basic_ops.py
+    $ nosetests tempest/scenario/test_network_basic_ops.py
 
 # Multi-Node Setup
 

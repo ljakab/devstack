@@ -96,6 +96,10 @@ HEATCLIENT_BRANCH=${HEATCLIENT_BRANCH:-master}
 HORIZON_REPO=${HORIZON_REPO:-${GIT_BASE}/openstack/horizon.git}
 HORIZON_BRANCH=${HORIZON_BRANCH:-master}
 
+# baremetal provisionint service
+IRONIC_REPO=${IRONIC_REPO:-${GIT_BASE}/openstack/ironic.git}
+IRONIC_BRANCH=${IRONIC_BRANCH:-master}
+
 # unified auth system (manages accounts/tokens)
 KEYSTONE_REPO=${KEYSTONE_REPO:-${GIT_BASE}/openstack/keystone.git}
 KEYSTONE_BRANCH=${KEYSTONE_BRANCH:-master}
@@ -183,11 +187,21 @@ RYU_BRANCH=${RYU_BRANCH:-master}
 SPICE_REPO=${SPICE_REPO:-http://anongit.freedesktop.org/git/spice/spice-html5.git}
 SPICE_BRANCH=${SPICE_BRANCH:-master}
 
+# trove service
+TROVE_REPO=${TROVE_REPO:-${GIT_BASE}/openstack/trove.git}
+TROVE_BRANCH=${TROVE_BRANCH:-master}
+
+# trove client library test
+TROVECLIENT_REPO=${TROVECLIENT_REPO:-${GIT_BASE}/openstack/python-troveclient.git}
+TROVECLIENT_BRANCH=${TROVECLIENT_BRANCH:-master}
 
 # Nova hypervisor configuration.  We default to libvirt with **kvm** but will
 # drop back to **qemu** if we are unable to load the kvm module.  ``stack.sh`` can
-# also install an **LXC**, **OpenVZ** or **XenAPI** based system.
-VIRT_DRIVER=${VIRT_DRIVER:-libvirt}
+# also install an **LXC**, **OpenVZ** or **XenAPI** based system.  If xenserver-core
+# is installed, the default will be XenAPI
+DEFAULT_VIRT_DRIVER=libvirt
+is_package_installed xenserver-core && DEFAULT_VIRT_DRIVER=xenserver
+VIRT_DRIVER=${VIRT_DRIVER:-$DEFAULT_VIRT_DRIVER}
 case "$VIRT_DRIVER" in
     libvirt)
         LIBVIRT_TYPE=${LIBVIRT_TYPE:-kvm}
@@ -196,6 +210,9 @@ case "$VIRT_DRIVER" in
         else
             LIBVIRT_GROUP=libvirtd
         fi
+        ;;
+    fake)
+        NUMBER_FAKE_NOVA_COMPUTE=${NUMBER_FAKE_NOVA_COMPUTE:-1}
         ;;
     xenserver)
         # Xen config common to nova and neutron
@@ -274,6 +291,9 @@ USE_SCREEN=${SCREEN_DEV:-$USE_SCREEN}
 
 # Set default screen name
 SCREEN_NAME=${SCREEN_NAME:-stack}
+
+# Do not install packages tagged with 'testonly' by default
+INSTALL_TESTONLY_PACKAGES=${INSTALL_TESTONLY_PACKAGES:-False}
 
 # Local variables:
 # mode: shell-script

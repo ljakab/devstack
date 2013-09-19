@@ -2,8 +2,8 @@
 
 # ``stack.sh`` is an opinionated OpenStack developer installation.  It
 # installs and configures various combinations of **Ceilometer**, **Cinder**,
-# **Glance**, **Heat**, **Horizon**, **Keystone**, **Nova**, **Neutron**
-# and **Swift**.
+# **Glance**, **Heat**, **Horizon**, **Keystone**, **Nova**, **Neutron**,
+# **Swift**, and **Trove**
 
 # This script allows you to specify configuration options of what git
 # repositories to use, enabled services, network configuration and various
@@ -203,7 +203,7 @@ if [[ $EUID -eq 0 ]]; then
     echo "Copying files to $STACK_USER user"
     STACK_DIR="$DEST/${TOP_DIR##*/}"
     cp -r -f -T "$TOP_DIR" "$STACK_DIR"
-    chown -R $STACK_USER "$STACK_DIR"
+    safe_chown -R $STACK_USER "$STACK_DIR"
     cd "$STACK_DIR"
     if [[ "$SHELL_AFTER_RUN" != "no" ]]; then
         exec sudo -u $STACK_USER  bash -l -c "set -e; bash stack.sh; bash"
@@ -234,8 +234,10 @@ else
 fi
 
 # Create the destination directory and ensure it is writable by the user
+# and read/executable by everybody for daemons (e.g. apache run for horizon)
 sudo mkdir -p $DEST
-sudo chown -R $STACK_USER $DEST
+safe_chown -R $STACK_USER $DEST
+safe_chmod 0755 $DEST
 
 # a basic test for $DEST path permissions (fatal on error unless skipped)
 check_path_perm_sanity ${DEST}
@@ -250,10 +252,13 @@ OFFLINE=`trueorfalse False $OFFLINE`
 # operation.
 ERROR_ON_CLONE=`trueorfalse False $ERROR_ON_CLONE`
 
+# Whether to enable the debug log level in OpenStack services
+ENABLE_DEBUG_LOG_LEVEL=`trueorfalse True $ENABLE_DEBUG_LOG_LEVEL`
+
 # Destination path for service data
 DATA_DIR=${DATA_DIR:-${DEST}/data}
 sudo mkdir -p $DATA_DIR
-sudo chown -R $STACK_USER $DATA_DIR
+safe_chown -R $STACK_USER $DATA_DIR
 
 
 # Common Configuration
@@ -313,6 +318,15 @@ source $TOP_DIR/lib/heat
 source $TOP_DIR/lib/neutron
 source $TOP_DIR/lib/baremetal
 source $TOP_DIR/lib/ldap
+source $TOP_DIR/lib/ironic
+source $TOP_DIR/lib/trove
+
+# Look for Nova hypervisor plugin
+NOVA_PLUGINS=$TOP_DIR/lib/nova_plugins
+if is_service_enabled nova && [[ -r $NOVA_PLUGINS/hypervisor-$VIRT_DRIVER ]]; then
+    # Load plugin
+    source $NOVA_PLUGINS/hypervisor-$VIRT_DRIVER
+fi
 
 # Set the destination directories for other OpenStack projects
 OPENSTACKCLIENT_DIR=$DEST/python-openstackclient
@@ -578,6 +592,12 @@ set -o xtrace
 echo_summary "Installing package prerequisites"
 source $TOP_DIR/tools/install_prereqs.sh
 
+# Configure an appropriate python environment
+$TOP_DIR/tools/install_pip.sh
+
+# Do the ugly hacks for borken packages and distros
+$TOP_DIR/tools/fixup_stuff.sh
+
 install_rpc_backend
 
 if is_service_enabled $DATABASE_BACKENDS; then
@@ -588,66 +608,12 @@ if is_service_enabled neutron; then
     install_neutron_agent_packages
 fi
 
-# Unbreak the giant mess that is the current state of setuptools
-unfubar_setuptools
-
-# System-specific preconfigure
-# ============================
-
-if [[ is_fedora && $DISTRO =~ (rhel6) ]]; then
-    # Disable selinux to avoid configuring to allow Apache access
-    # to Horizon files or run nodejs (LP#1175444)
-    if selinuxenabled; then
-        sudo setenforce 0
-    fi
-
-    # An old version of ``python-crypto`` (2.0.1) may be installed on a
-    # fresh system via Anaconda and the dependency chain
-    # ``cas`` -> ``python-paramiko`` -> ``python-crypto``.
-    # ``pip uninstall pycrypto`` will remove the packaged ``.egg-info`` file
-    # but leave most of the actual library files behind in ``/usr/lib64/python2.6/Crypto``.
-    # Later ``pip install pycrypto`` will install over the packaged files resulting
-    # in a useless mess of old, rpm-packaged files and pip-installed files.
-    # Remove the package so that ``pip install python-crypto`` installs cleanly.
-    # Note: other RPM packages may require ``python-crypto`` as well.  For example,
-    # RHEL6 does not install ``python-paramiko packages``.
-    uninstall_package python-crypto
-
-    # A similar situation occurs with ``python-lxml``, which is required by
-    # ``ipa-client``, an auditing package we don't care about.  The
-    # build-dependencies needed for ``pip install lxml`` (``gcc``,
-    # ``libxml2-dev`` and ``libxslt-dev``) are present in ``files/rpms/general``.
-    uninstall_package python-lxml
-
-    # If the ``dbus`` package was installed by DevStack dependencies the
-    # uuid may not be generated because the service was never started (PR#598200),
-    # causing Nova to stop later on complaining that ``/var/lib/dbus/machine-id``
-    # does not exist.
-    sudo service messagebus restart
-
-    # ``setup.py`` contains a ``setup_requires`` package that is supposed
-    # to be transient.  However, RHEL6 distribute has a bug where
-    # ``setup_requires`` registers entry points that are not cleaned
-    # out properly after the setup-phase resulting in installation failures
-    # (bz#924038).  Pre-install the problem package so the ``setup_requires``
-    # dependency is satisfied and it will not be installed transiently.
-    # Note we do this before the track-depends below.
-    pip_install hgtools
-
-    # RHEL6's version of ``python-nose`` is incompatible with Tempest.
-    # Install nose 1.1 (Tempest-compatible) from EPEL
-    install_package python-nose1.1
-    # Add a symlink for the new nosetests to allow tox for Tempest to
-    # work unmolested.
-    sudo ln -sf /usr/bin/nosetests1.1 /usr/local/bin/nosetests
-fi
-
 TRACK_DEPENDS=${TRACK_DEPENDS:-False}
 
 # Install python packages into a virtualenv so that we can track them
 if [[ $TRACK_DEPENDS = True ]]; then
     echo_summary "Installing Python packages into a virtualenv $DEST/.venv"
-    install_package python-virtualenv
+    pip_install -U virtualenv
 
     rm -rf $DEST/.venv
     virtualenv --system-site-packages $DEST/.venv
@@ -755,12 +721,23 @@ if is_service_enabled heat; then
     configure_heat
 fi
 
+if is_service_enabled trove; then
+    install_trove
+    install_troveclient
+    cleanup_trove
+fi
+
 if is_service_enabled tls-proxy; then
     configure_CA
     init_CA
     init_cert
     # Add name to /etc/hosts
     # don't be naive and add to existing line!
+fi
+
+if is_service_enabled ir-api ir-cond; then
+    install_ironic
+    configure_ironic
 fi
 
 if [[ $TRACK_DEPENDS = True ]]; then
@@ -890,6 +867,10 @@ if is_service_enabled key; then
     create_cinder_accounts
     create_neutron_accounts
 
+    if is_service_enabled trove; then
+        create_trove_accounts
+    fi
+
     if is_service_enabled swift || is_service_enabled s-proxy; then
         create_swift_accounts
     fi
@@ -931,6 +912,15 @@ if is_service_enabled g-reg; then
     init_glance
 fi
 
+# Ironic
+# ------
+
+if is_service_enabled ir-api ir-cond; then
+    echo_summary "Configuring Ironic"
+    init_ironic
+fi
+
+
 
 # Neutron
 # -------
@@ -939,7 +929,10 @@ if is_service_enabled neutron; then
     echo_summary "Configuring Neutron"
 
     configure_neutron
-    init_neutron
+    # Run init_neutron only on the node hosting the neutron API server
+    if is_service_enabled $DATABASE_BACKENDS && is_service_enabled q-svc; then
+        init_neutron
+    fi
 fi
 
 # Some Neutron plugins require network controllers which are not
@@ -972,7 +965,7 @@ if is_service_enabled n-net q-dhcp; then
     clean_iptables
     rm -rf ${NOVA_STATE_PATH}/networks
     sudo mkdir -p ${NOVA_STATE_PATH}/networks
-    sudo chown -R ${USER} ${NOVA_STATE_PATH}/networks
+    safe_chown -R ${USER} ${NOVA_STATE_PATH}/networks
     # Force IP forwarding on, just in case
     sudo sysctl -w net.ipv4.ip_forward=1
 fi
@@ -995,6 +988,10 @@ if is_service_enabled cinder; then
     init_cinder
 fi
 
+
+# Compute Service
+# ---------------
+
 if is_service_enabled nova; then
     echo_summary "Configuring Nova"
     # Rebuild the config file from scratch
@@ -1009,10 +1006,15 @@ if is_service_enabled nova; then
     fi
 
 
+    if [[ -r $NOVA_PLUGINS/hypervisor-$VIRT_DRIVER ]]; then
+        # Configure hypervisor plugin
+        configure_nova_hypervisor
+
+
     # XenServer
     # ---------
 
-    if [ "$VIRT_DRIVER" = 'xenserver' ]; then
+    elif [ "$VIRT_DRIVER" = 'xenserver' ]; then
         echo_summary "Using XenServer virtualization driver"
         if [ -z "$XENAPI_CONNECTION_URL" ]; then
             die $LINENO "XENAPI_CONNECTION_URL is not specified"
@@ -1168,6 +1170,12 @@ if is_service_enabled g-api g-reg; then
     start_glance
 fi
 
+# Launch the Ironic services
+if is_service_enabled ir-api ir-cond; then
+    echo_summary "Starting Ironic"
+    start_ironic
+fi
+
 # Create an access key and secret key for nova ec2 register image
 if is_service_enabled key && is_service_enabled swift3 && is_service_enabled nova; then
     NOVA_USER_ID=$(keystone user-list | grep ' nova ' | get_field 1)
@@ -1239,6 +1247,18 @@ if is_service_enabled heat; then
     start_heat
 fi
 
+# Configure and launch the trove service api, and taskmanager
+if is_service_enabled trove; then
+    # Initialize trove
+    echo_summary "Configuring Trove"
+    configure_troveclient
+    configure_trove
+    init_trove
+
+    # Start the trove API and trove taskmgr components
+    echo_summary "Starting Trove"
+    start_trove
+fi
 
 # Create account rc files
 # =======================

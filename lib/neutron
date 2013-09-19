@@ -207,6 +207,10 @@ source $TOP_DIR/lib/neutron_plugins/services/loadbalancer
 # Hardcoding for 1 service plugin for now
 source $TOP_DIR/lib/neutron_plugins/services/vpn
 
+# Firewall Service Plugin functions
+# --------------------------------
+source $TOP_DIR/lib/neutron_plugins/services/firewall
+
 # Use security group or not
 if has_neutron_plugin_security_group; then
     Q_USE_SECGROUP=${Q_USE_SECGROUP:-True}
@@ -230,6 +234,9 @@ function configure_neutron() {
     if is_service_enabled q-vpn; then
         _configure_neutron_vpn
     fi
+    if is_service_enabled q-fwaas; then
+        _configure_neutron_fwaas
+    fi
     if is_service_enabled q-svc; then
         _configure_neutron_service
     fi
@@ -250,18 +257,18 @@ function configure_neutron() {
 }
 
 function create_nova_conf_neutron() {
-    iniset $NOVA_CONF DEFAULT network_api_class "nova.network.quantumv2.api.API"
-    iniset $NOVA_CONF DEFAULT quantum_admin_username "$Q_ADMIN_USERNAME"
-    iniset $NOVA_CONF DEFAULT quantum_admin_password "$SERVICE_PASSWORD"
-    iniset $NOVA_CONF DEFAULT quantum_admin_auth_url "$KEYSTONE_SERVICE_PROTOCOL://$KEYSTONE_SERVICE_HOST:$KEYSTONE_AUTH_PORT/v2.0"
-    iniset $NOVA_CONF DEFAULT quantum_auth_strategy "$Q_AUTH_STRATEGY"
-    iniset $NOVA_CONF DEFAULT quantum_admin_tenant_name "$SERVICE_TENANT_NAME"
-    iniset $NOVA_CONF DEFAULT quantum_region_name "RegionOne"
-    iniset $NOVA_CONF DEFAULT quantum_url "http://$Q_HOST:$Q_PORT"
+    iniset $NOVA_CONF DEFAULT network_api_class "nova.network.neutronv2.api.API"
+    iniset $NOVA_CONF DEFAULT neutron_admin_username "$Q_ADMIN_USERNAME"
+    iniset $NOVA_CONF DEFAULT neutron_admin_password "$SERVICE_PASSWORD"
+    iniset $NOVA_CONF DEFAULT neutron_admin_auth_url "$KEYSTONE_SERVICE_PROTOCOL://$KEYSTONE_SERVICE_HOST:$KEYSTONE_AUTH_PORT/v2.0"
+    iniset $NOVA_CONF DEFAULT neutron_auth_strategy "$Q_AUTH_STRATEGY"
+    iniset $NOVA_CONF DEFAULT neutron_admin_tenant_name "$SERVICE_TENANT_NAME"
+    iniset $NOVA_CONF DEFAULT neutron_region_name "RegionOne"
+    iniset $NOVA_CONF DEFAULT neutron_url "http://$Q_HOST:$Q_PORT"
 
     if [[ "$Q_USE_SECGROUP" == "True" ]]; then
         LIBVIRT_FIREWALL_DRIVER=nova.virt.firewall.NoopFirewallDriver
-        iniset $NOVA_CONF DEFAULT security_group_api quantum
+        iniset $NOVA_CONF DEFAULT security_group_api neutron
     fi
 
     # set NOVA_VIF_DRIVER and optionally set options in nova_conf
@@ -270,7 +277,7 @@ function create_nova_conf_neutron() {
     iniset $NOVA_CONF DEFAULT libvirt_vif_driver "$NOVA_VIF_DRIVER"
     iniset $NOVA_CONF DEFAULT linuxnet_interface_driver "$LINUXNET_VIF_DRIVER"
     if is_service_enabled q-meta; then
-        iniset $NOVA_CONF DEFAULT service_quantum_metadata_proxy "True"
+        iniset $NOVA_CONF DEFAULT service_neutron_metadata_proxy "True"
     fi
 }
 
@@ -294,9 +301,9 @@ function create_neutron_accounts() {
             --email=neutron@example.com \
             | grep " id " | get_field 2)
         keystone user-role-add \
-            --tenant_id $SERVICE_TENANT \
-            --user_id $NEUTRON_USER \
-            --role_id $ADMIN_ROLE
+            --tenant-id $SERVICE_TENANT \
+            --user-id $NEUTRON_USER \
+            --role-id $ADMIN_ROLE
         if [[ "$KEYSTONE_CATALOG_BACKEND" = 'sql' ]]; then
             NEUTRON_SERVICE=$(keystone service-create \
                 --name=neutron \
@@ -320,6 +327,9 @@ function create_neutron_initial_network() {
     # Since neutron command is executed in admin context at this point,
     # ``--tenant_id`` needs to be specified.
     if is_baremetal; then
+        if [[ "$PUBLIC_INTERFACE" == '' || "$OVS_PHYSICAL_BRIDGE" == '' ]]; then
+            die $LINENO "Neutron settings for baremetal not set.. exiting"
+        fi
         sudo ovs-vsctl add-port $OVS_PHYSICAL_BRIDGE $PUBLIC_INTERFACE
         for IP in $(ip addr show dev $PUBLIC_INTERFACE | grep ' inet ' | awk '{print $2}'); do
             sudo ip addr del $IP dev $PUBLIC_INTERFACE
@@ -328,6 +338,7 @@ function create_neutron_initial_network() {
         NET_ID=$(neutron net-create $PHYSICAL_NETWORK --tenant_id $TENANT_ID --provider:network_type flat --provider:physical_network "$PHYSICAL_NETWORK" | grep ' id ' | get_field 2)
         SUBNET_ID=$(neutron subnet-create --tenant_id $TENANT_ID --ip_version 4 ${ALLOCATION_POOL:+--allocation-pool $ALLOCATION_POOL} --gateway $NETWORK_GATEWAY --name $PRIVATE_SUBNET_NAME $NET_ID $FIXED_RANGE | grep ' id ' | get_field 2)
         sudo ifconfig $OVS_PHYSICAL_BRIDGE up
+        sudo route add default gw $NETWORK_GATEWAY dev $OVS_PHYSICAL_BRIDGE
     else
         NET_ID=$(neutron net-create --tenant_id $TENANT_ID "$PRIVATE_NETWORK_NAME" | grep ' id ' | get_field 2)
         SUBNET_ID=$(neutron subnet-create --tenant_id $TENANT_ID --ip_version 4 --gateway $NETWORK_GATEWAY --name $PRIVATE_SUBNET_NAME $NET_ID $FIXED_RANGE | grep ' id ' | get_field 2)
@@ -367,7 +378,9 @@ function create_neutron_initial_network() {
 
 # init_neutron() - Initialize databases, etc.
 function init_neutron() {
-    :
+    recreate_database $Q_DB_NAME utf8
+    # Run Neutron db migrations
+    $NEUTRON_BIN_DIR/neutron-db-manage --config-file $NEUTRON_CONF --config-file /$Q_PLUGIN_CONF_FILE upgrade head
 }
 
 # install_neutron() - Collect source and prepare
@@ -380,6 +393,7 @@ function install_neutron() {
 function install_neutronclient() {
     git_clone $NEUTRONCLIENT_REPO $NEUTRONCLIENT_DIR $NEUTRONCLIENT_BRANCH
     setup_develop $NEUTRONCLIENT_DIR
+    sudo install -D -m 0644 -o $STACK_USER {$NEUTRONCLIENT_DIR/tools/,/etc/bash_completion.d/}neutron.bash_completion
 }
 
 # install_neutron_agent_packages() - Collect source and prepare
@@ -416,11 +430,17 @@ function start_neutron_agents() {
     screen_it q-agt "cd $NEUTRON_DIR && python $AGENT_BINARY --config-file $NEUTRON_CONF --config-file /$Q_PLUGIN_CONF_FILE"
     screen_it q-dhcp "cd $NEUTRON_DIR && python $AGENT_DHCP_BINARY --config-file $NEUTRON_CONF --config-file=$Q_DHCP_CONF_FILE"
 
-    if is_service_enabled q-vpn; then
-        screen_it q-vpn "cd $NEUTRON_DIR && $AGENT_VPN_BINARY --config-file $NEUTRON_CONF --config-file=$Q_L3_CONF_FILE"
-    else
-        screen_it q-l3 "cd $NEUTRON_DIR && python $AGENT_L3_BINARY --config-file $NEUTRON_CONF --config-file=$Q_L3_CONF_FILE"
+    L3_CONF_FILES="--config-file $NEUTRON_CONF --config-file=$Q_L3_CONF_FILE"
+
+    if is_service_enabled q-fwaas; then
+        L3_CONF_FILES="$L3_CONF_FILES --config-file $Q_FWAAS_CONF_FILE"
     fi
+    if is_service_enabled q-vpn; then
+        screen_it q-vpn "cd $NEUTRON_DIR && $AGENT_VPN_BINARY $L3_CONF_FILES"
+    else
+        screen_it q-l3 "cd $NEUTRON_DIR && python $AGENT_L3_BINARY $L3_CONF_FILES"
+    fi
+
     screen_it q-meta "cd $NEUTRON_DIR && python $AGENT_META_BINARY --config-file $NEUTRON_CONF --config-file=$Q_META_CONF_FILE"
 
     if [ "$VIRT_DRIVER" = 'xenserver' ]; then
@@ -477,7 +497,7 @@ function _configure_neutron_common() {
     #    ``Q_PLUGIN_EXTRA_CONF_FILES=(file1, file2)``
     neutron_plugin_configure_common
 
-    if [[ $Q_PLUGIN_CONF_PATH == '' || $Q_PLUGIN_CONF_FILENAME == '' || $Q_PLUGIN_CLASS == '' ]]; then
+    if [[ "$Q_PLUGIN_CONF_PATH" == '' || "$Q_PLUGIN_CONF_FILENAME" == '' || "$Q_PLUGIN_CLASS" == '' ]]; then
         die $LINENO "Neutron plugin not set.. exiting"
     fi
 
@@ -505,6 +525,15 @@ function _configure_neutron_common() {
         done
     fi
 
+    if [ "$VIRT_DRIVER" = 'fake' ]; then
+        # Disable arbitrary limits
+        iniset $NEUTRON_CONF quotas quota_network -1
+        iniset $NEUTRON_CONF quotas quota_subnet -1
+        iniset $NEUTRON_CONF quotas quota_port -1
+        iniset $NEUTRON_CONF quotas quota_security_group -1
+        iniset $NEUTRON_CONF quotas quota_security_group_rule -1
+    fi
+
     _neutron_setup_rootwrap
 }
 
@@ -523,7 +552,6 @@ function _configure_neutron_debug_command() {
     # be cleaned.
     iniset $NEUTRON_TEST_CONFIG_FILE agent root_helper "$Q_RR_COMMAND"
 
-    _neutron_setup_keystone $NEUTRON_TEST_CONFIG_FILE DEFAULT set_auth_url
     _neutron_setup_interface_driver $NEUTRON_TEST_CONFIG_FILE
 
     neutron_plugin_configure_debug_command
@@ -536,11 +564,18 @@ function _configure_neutron_dhcp_agent() {
     cp $NEUTRON_DIR/etc/dhcp_agent.ini $Q_DHCP_CONF_FILE
 
     iniset $Q_DHCP_CONF_FILE DEFAULT verbose True
-    iniset $Q_DHCP_CONF_FILE DEFAULT debug True
+    iniset $Q_DHCP_CONF_FILE DEFAULT debug $ENABLE_DEBUG_LOG_LEVEL
     iniset $Q_DHCP_CONF_FILE DEFAULT use_namespaces $Q_USE_NAMESPACE
     iniset $Q_DHCP_CONF_FILE DEFAULT root_helper "$Q_RR_COMMAND"
 
-    _neutron_setup_keystone $Q_DHCP_CONF_FILE DEFAULT set_auth_url
+    # Define extra "DEFAULT" configuration options when q-dhcp is configured by
+    # defining the array ``Q_DHCP_EXTRA_DEFAULT_OPTS``.
+    # For Example: ``Q_DHCP_EXTRA_DEFAULT_OPTS=(foo=true bar=2)``
+    for I in "${Q_DHCP_EXTRA_DEFAULT_OPTS[@]}"; do
+        # Replace the first '=' with ' ' for iniset syntax
+        iniset $Q_DHCP_CONF_FILE DEFAULT ${I/=/ }
+    done
+
     _neutron_setup_interface_driver $Q_DHCP_CONF_FILE
 
     neutron_plugin_configure_dhcp_agent
@@ -554,14 +589,17 @@ function _configure_neutron_l3_agent() {
     AGENT_L3_BINARY=${AGENT_L3_BINARY:-"$NEUTRON_BIN_DIR/neutron-l3-agent"}
     Q_L3_CONF_FILE=$NEUTRON_CONF_DIR/l3_agent.ini
 
+    if is_service_enabled q-fwaas; then
+        Q_FWAAS_CONF_FILE=$NEUTRON_CONF_DIR/fwaas_driver.ini
+    fi
+
     cp $NEUTRON_DIR/etc/l3_agent.ini $Q_L3_CONF_FILE
 
     iniset $Q_L3_CONF_FILE DEFAULT verbose True
-    iniset $Q_L3_CONF_FILE DEFAULT debug True
+    iniset $Q_L3_CONF_FILE DEFAULT debug $ENABLE_DEBUG_LOG_LEVEL
     iniset $Q_L3_CONF_FILE DEFAULT use_namespaces $Q_USE_NAMESPACE
     iniset $Q_L3_CONF_FILE DEFAULT root_helper "$Q_RR_COMMAND"
 
-    _neutron_setup_keystone $Q_L3_CONF_FILE DEFAULT set_auth_url
     _neutron_setup_interface_driver $Q_L3_CONF_FILE
 
     neutron_plugin_configure_l3_agent
@@ -574,16 +612,22 @@ function _configure_neutron_metadata_agent() {
     cp $NEUTRON_DIR/etc/metadata_agent.ini $Q_META_CONF_FILE
 
     iniset $Q_META_CONF_FILE DEFAULT verbose True
-    iniset $Q_META_CONF_FILE DEFAULT debug True
+    iniset $Q_META_CONF_FILE DEFAULT debug $ENABLE_DEBUG_LOG_LEVEL
     iniset $Q_META_CONF_FILE DEFAULT nova_metadata_ip $Q_META_DATA_IP
     iniset $Q_META_CONF_FILE DEFAULT root_helper "$Q_RR_COMMAND"
 
-    _neutron_setup_keystone $Q_META_CONF_FILE DEFAULT set_auth_url
+    _neutron_setup_keystone $Q_META_CONF_FILE DEFAULT True True True
+
 }
 
 function _configure_neutron_lbaas() {
     neutron_agent_lbaas_configure_common
     neutron_agent_lbaas_configure_agent
+}
+
+function _configure_neutron_fwaas() {
+    neutron_fwaas_configure_common
+    neutron_fwaas_configure_driver
 }
 
 function _configure_neutron_vpn()
@@ -599,7 +643,7 @@ function _configure_neutron_plugin_agent() {
     # ensure that an agent's configuration can override the default
     iniset /$Q_PLUGIN_CONF_FILE agent root_helper "$Q_RR_COMMAND"
     iniset $NEUTRON_CONF DEFAULT verbose True
-    iniset $NEUTRON_CONF DEFAULT debug True
+    iniset $NEUTRON_CONF DEFAULT debug $ENABLE_DEBUG_LOG_LEVEL
 
     # Configure agent for plugin
     neutron_plugin_configure_plugin_agent
@@ -614,12 +658,6 @@ function _configure_neutron_service() {
     cp $NEUTRON_DIR/etc/api-paste.ini $Q_API_PASTE_FILE
     cp $NEUTRON_DIR/etc/policy.json $Q_POLICY_FILE
 
-    if is_service_enabled $DATABASE_BACKENDS; then
-        recreate_database $Q_DB_NAME utf8
-    else
-        die $LINENO "A database must be enabled in order to use the $Q_PLUGIN Neutron plugin."
-    fi
-
     # Update either configuration file with plugin
     iniset $NEUTRON_CONF DEFAULT core_plugin $Q_PLUGIN_CLASS
 
@@ -628,7 +666,7 @@ function _configure_neutron_service() {
     fi
 
     iniset $NEUTRON_CONF DEFAULT verbose True
-    iniset $NEUTRON_CONF DEFAULT debug True
+    iniset $NEUTRON_CONF DEFAULT debug $ENABLE_DEBUG_LOG_LEVEL
     iniset $NEUTRON_CONF DEFAULT policy_file $Q_POLICY_FILE
     iniset $NEUTRON_CONF DEFAULT allow_overlapping_ips $Q_ALLOW_OVERLAPPING_IP
 
@@ -695,21 +733,29 @@ function _neutron_setup_keystone() {
     local conf_file=$1
     local section=$2
     local use_auth_url=$3
+    local skip_auth_cache=$4
+    local use_service_port=$5
+    local keystone_port=$KEYSTONE_AUTH_PORT
+    if [[ -n $use_service_port ]]; then
+        keystone_port=$KEYSTONE_SERVICE_PORT
+    fi
     if [[ -n $use_auth_url ]]; then
-        iniset $conf_file $section auth_url "$KEYSTONE_SERVICE_PROTOCOL://$KEYSTONE_AUTH_HOST:$KEYSTONE_AUTH_PORT/v2.0"
+        iniset $conf_file $section auth_url "$KEYSTONE_SERVICE_PROTOCOL://$KEYSTONE_AUTH_HOST:$keystone_port/v2.0"
     else
         iniset $conf_file $section auth_host $KEYSTONE_SERVICE_HOST
-        iniset $conf_file $section auth_port $KEYSTONE_AUTH_PORT
+        iniset $conf_file $section auth_port $keystone_port
         iniset $conf_file $section auth_protocol $KEYSTONE_SERVICE_PROTOCOL
     fi
     iniset $conf_file $section admin_tenant_name $SERVICE_TENANT_NAME
     iniset $conf_file $section admin_user $Q_ADMIN_USERNAME
     iniset $conf_file $section admin_password $SERVICE_PASSWORD
-    iniset $conf_file $section signing_dir $NEUTRON_AUTH_CACHE_DIR
-    # Create cache dir
-    sudo mkdir -p $NEUTRON_AUTH_CACHE_DIR
-    sudo chown $STACK_USER $NEUTRON_AUTH_CACHE_DIR
-    rm -f $NEUTRON_AUTH_CACHE_DIR/*
+    if [[ -z $skip_auth_cache ]]; then
+        iniset $conf_file $section signing_dir $NEUTRON_AUTH_CACHE_DIR
+        # Create cache dir
+        sudo mkdir -p $NEUTRON_AUTH_CACHE_DIR
+        sudo chown $STACK_USER $NEUTRON_AUTH_CACHE_DIR
+        rm -f $NEUTRON_AUTH_CACHE_DIR/*
+    fi
 }
 
 function _neutron_setup_interface_driver() {
