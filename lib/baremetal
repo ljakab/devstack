@@ -215,7 +215,16 @@ function configure_baremetal_nova_dirs() {
     # ensure /tftpboot is prepared
     sudo mkdir -p /tftpboot
     sudo mkdir -p /tftpboot/pxelinux.cfg
-    sudo cp /usr/lib/syslinux/pxelinux.0 /tftpboot/
+
+    PXEBIN=/usr/share/syslinux/pxelinux.0
+    if [ ! -f $PXEBIN ]; then
+        PXEBIN=/usr/lib/syslinux/pxelinux.0
+        if [ ! -f $PXEBIN ]; then
+            die $LINENO "pxelinux.0 (from SYSLINUX) not found."
+        fi
+    fi
+
+    sudo cp $PXEBIN /tftpboot/
     sudo chown -R $STACK_USER:$LIBVIRT_GROUP /tftpboot
 
     # ensure $NOVA_STATE_PATH/baremetal is prepared
@@ -291,7 +300,7 @@ function extract_and_upload_k_and_r_from_image() {
     out=$($BM_IMAGE_BUILD_DIR/bin/disk-image-get-kernel \
             -x -d $TOP_DIR/files -o bm-deploy -i $file)
     if [ $? -ne 0 ]; then
-        die "Failed to get kernel and ramdisk from $file"
+        die $LINENO "Failed to get kernel and ramdisk from $file"
     fi
     XTRACE=$(set +o | grep xtrace)
     set +o xtrace
@@ -439,9 +448,9 @@ function add_baremetal_node() {
        "$BM_FLAVOR_ROOT_DISK" \
        "$mac_1" \
        | grep ' id ' | get_field 2 )
-    [ $? -eq 0 ] || [ "$id" ] || die "Error adding baremetal node"
+    [ $? -eq 0 ] || [ "$id" ] || die $LINENO "Error adding baremetal node"
     id2=$(nova baremetal-interface-add "$id" "$mac_2" )
-    [ $? -eq 0 ] || [ "$id2" ] || die "Error adding interface to barmetal node $id"
+    [ $? -eq 0 ] || [ "$id2" ] || die $LINENO "Error adding interface to barmetal node $id"
 }
 
 

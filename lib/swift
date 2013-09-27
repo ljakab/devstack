@@ -55,7 +55,13 @@ fi
 # swift data. Set ``SWIFT_LOOPBACK_DISK_SIZE`` to the disk size in
 # kilobytes.
 # Default is 1 gigabyte.
-SWIFT_LOOPBACK_DISK_SIZE=${SWIFT_LOOPBACK_DISK_SIZE:-1000000}
+SWIFT_LOOPBACK_DISK_SIZE_DEFAULT=1048576
+# if tempest enabled the default size is 4 Gigabyte.
+if is_service_enabled tempest; then
+    SWIFT_LOOPBACK_DISK_SIZE_DEFAULT=${SWIFT_LOOPBACK_DISK_SIZE:-4194304}
+fi
+
+SWIFT_LOOPBACK_DISK_SIZE=${SWIFT_LOOPBACK_DISK_SIZE:-$SWIFT_LOOPBACK_DISK_SIZE_DEFAULT}
 
 # Set ``SWIFT_EXTRAS_MIDDLEWARE`` to extras middlewares.
 # Default is ``staticweb, tempurl, formpost``
@@ -109,11 +115,11 @@ function cleanup_swift() {
 # _cleanup_swift_apache_wsgi() - Remove wsgi files, disable and remove apache vhost file
 function _cleanup_swift_apache_wsgi() {
     sudo rm -f $SWIFT_APACHE_WSGI_DIR/*.wsgi
-    ! is_fedora && sudo a2dissite proxy-server
+    disable_apache_site proxy-server
     for node_number in ${SWIFT_REPLICAS_SEQ}; do
         for type in object container account; do
             site_name=${type}-server-${node_number}
-            ! is_fedora && sudo a2dissite ${site_name}
+            disable_apache_site ${site_name}
             sudo rm -f /etc/$APACHE_NAME/$APACHE_CONF_DIR/${site_name}
         done
     done
@@ -132,14 +138,15 @@ function _config_swift_apache_wsgi() {
         s/%PORT%/$proxy_port/g;
         s/%SERVICENAME%/proxy-server/g;
         s/%APACHE_NAME%/${APACHE_NAME}/g;
+        s/%USER%/${STACK_USER}/g;
     " -i ${apache_vhost_dir}/proxy-server
+    enable_apache_site proxy-server
 
     sudo cp ${SWIFT_DIR}/examples/wsgi/proxy-server.wsgi.template ${SWIFT_APACHE_WSGI_DIR}/proxy-server.wsgi
     sudo sed -e "
         /^#/d;/^$/d;
         s/%SERVICECONF%/proxy-server.conf/g;
     " -i ${SWIFT_APACHE_WSGI_DIR}/proxy-server.wsgi
-    ! is_fedora && sudo a2ensite proxy-server
 
     # copy apache vhost file and set name and port
     for node_number in ${SWIFT_REPLICAS_SEQ}; do
@@ -152,8 +159,9 @@ function _config_swift_apache_wsgi() {
             s/%PORT%/$object_port/g;
             s/%SERVICENAME%/object-server-${node_number}/g;
             s/%APACHE_NAME%/${APACHE_NAME}/g;
+            s/%USER%/${STACK_USER}/g;
         " -i ${apache_vhost_dir}/object-server-${node_number}
-        ! is_fedora && sudo a2ensite object-server-${node_number}
+        enable_apache_site object-server-${node_number}
 
         sudo cp ${SWIFT_DIR}/examples/wsgi/object-server.wsgi.template ${SWIFT_APACHE_WSGI_DIR}/object-server-${node_number}.wsgi
         sudo sed -e "
@@ -167,8 +175,9 @@ function _config_swift_apache_wsgi() {
             s/%PORT%/$container_port/g;
             s/%SERVICENAME%/container-server-${node_number}/g;
             s/%APACHE_NAME%/${APACHE_NAME}/g;
+            s/%USER%/${STACK_USER}/g;
         " -i ${apache_vhost_dir}/container-server-${node_number}
-        ! is_fedora && sudo a2ensite container-server-${node_number}
+        enable_apache_site container-server-${node_number}
 
         sudo cp ${SWIFT_DIR}/examples/wsgi/container-server.wsgi.template ${SWIFT_APACHE_WSGI_DIR}/container-server-${node_number}.wsgi
         sudo sed -e "
@@ -182,22 +191,16 @@ function _config_swift_apache_wsgi() {
             s/%PORT%/$account_port/g;
             s/%SERVICENAME%/account-server-${node_number}/g;
             s/%APACHE_NAME%/${APACHE_NAME}/g;
+            s/%USER%/${STACK_USER}/g;
         " -i ${apache_vhost_dir}/account-server-${node_number}
-        ! is_fedora && sudo a2ensite account-server-${node_number}
+        enable_apache_site account-server-${node_number}
 
         sudo cp ${SWIFT_DIR}/examples/wsgi/account-server.wsgi.template ${SWIFT_APACHE_WSGI_DIR}/account-server-${node_number}.wsgi
         sudo sed -e "
              /^#/d;/^$/d;
             s/%SERVICECONF%/account-server\/${node_number}.conf/g;
         " -i ${SWIFT_APACHE_WSGI_DIR}/account-server-${node_number}.wsgi
-
     done
-
-    # run apache server as stack user
-    change_apache_user_group ${STACK_USER}
-
-    # WSGI isn't enabled by default, enable it
-    ! is_fedora && sudo a2enmod wsgi
 }
 
 # configure_swift() - Set config files, create data dirs and loop image
@@ -552,10 +555,6 @@ function start_swift() {
     fi
 
     if is_apache_enabled_service swift; then
-        # Make sure the apache lock dir is owned by $STACK_USER
-        # for running apache server to avoid failure of restarting
-        # apache server due to permission problem.
-        sudo chown -R $STACK_USER /var/run/lock/$APACHE_NAME
         restart_apache_server
         swift-init --run-dir=${SWIFT_DATA_DIR}/run rest start
         screen_it s-proxy "cd $SWIFT_DIR && sudo tail -f /var/log/$APACHE_NAME/proxy-server"

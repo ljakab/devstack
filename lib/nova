@@ -451,6 +451,9 @@ function create_nova_conf() {
     iniset $NOVA_CONF DEFAULT s3_port "$S3_SERVICE_PORT"
     iniset $NOVA_CONF DEFAULT osapi_compute_extension "nova.api.openstack.compute.contrib.standard_extensions"
     iniset $NOVA_CONF DEFAULT my_ip "$HOST_IP"
+    iniset $NOVA_CONF DEFAULT osapi_compute_workers "4"
+    iniset $NOVA_CONF DEFAULT ec2_workers "4"
+    iniset $NOVA_CONF DEFAULT metadata_workers "4"
     iniset $NOVA_CONF DEFAULT sql_connection `database_connection_url nova`
     if is_baremetal; then
         iniset $NOVA_CONF baremetal sql_connection `database_connection_url nova_bm`
@@ -496,12 +499,9 @@ function create_nova_conf() {
     if [ "$API_RATE_LIMIT" != "True" ]; then
         iniset $NOVA_CONF DEFAULT api_rate_limit "False"
     fi
+    # Format logging
     if [ "$LOG_COLOR" == "True" ] && [ "$SYSLOG" == "False" ]; then
-        # Add color to logging output
-        iniset $NOVA_CONF DEFAULT logging_context_format_string "%(asctime)s.%(msecs)03d %(color)s%(levelname)s %(name)s [[01;36m%(request_id)s [00;36m%(user_name)s %(project_name)s%(color)s] [01;35m%(instance)s%(color)s%(message)s[00m"
-        iniset $NOVA_CONF DEFAULT logging_default_format_string "%(asctime)s.%(msecs)03d %(color)s%(levelname)s %(name)s [[00;36m-%(color)s] [01;35m%(instance)s%(color)s%(message)s[00m"
-        iniset $NOVA_CONF DEFAULT logging_debug_format_suffix "[00;33mfrom (pid=%(process)d) %(funcName)s %(pathname)s:%(lineno)d[00m"
-        iniset $NOVA_CONF DEFAULT logging_exception_prefix "%(color)s%(asctime)s.%(msecs)03d TRACE %(name)s [01;35m%(instance)s[00m"
+        setup_colorized_logging $NOVA_CONF DEFAULT
     else
         # Show user_name and project_name instead of user_id and project_id
         iniset $NOVA_CONF DEFAULT logging_context_format_string "%(asctime)s.%(msecs)03d %(levelname)s %(name)s [%(request_id)s %(user_name)s %(project_name)s] %(instance)s%(message)s"
@@ -510,7 +510,6 @@ function create_nova_conf() {
         iniset $NOVA_CONF DEFAULT instance_usage_audit "True"
         iniset $NOVA_CONF DEFAULT instance_usage_audit_period "hour"
         iniset $NOVA_CONF DEFAULT notify_on_state_change "vm_and_task_state"
-        iniset_multiline $NOVA_CONF DEFAULT notification_driver "nova.openstack.common.notifier.rpc_notifier" "ceilometer.compute.nova_notifier"
     fi
 
     # Provide some transition from ``EXTRA_FLAGS`` to ``EXTRA_OPTS``

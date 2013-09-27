@@ -230,11 +230,6 @@ function configure_tempest() {
 
     # Compute
     iniset $TEMPEST_CONF compute change_password_available False
-    # Note(nati) current tempest don't create network for each tenant
-    # so reuse same tenant for now
-    if is_service_enabled neutron; then
-        TEMPEST_ALLOW_TENANT_ISOLATION=${TEMPEST_ALLOW_TENANT_ISOLATION:-False}
-    fi
     iniset $TEMPEST_CONF compute allow_tenant_isolation ${TEMPEST_ALLOW_TENANT_ISOLATION:-True}
     iniset $TEMPEST_CONF compute ssh_user ${DEFAULT_INSTANCE_USER:-cirros} # DEPRECATED
     iniset $TEMPEST_CONF compute network_for_ssh $PRIVATE_NETWORK_NAME
@@ -248,14 +243,6 @@ function configure_tempest() {
     iniset $TEMPEST_CONF compute flavor_ref_alt $flavor_ref_alt
     iniset $TEMPEST_CONF compute live_migration_available ${LIVE_MIGRATION_AVAILABLE:-False}
     iniset $TEMPEST_CONF compute use_block_migration_for_live_migration ${USE_BLOCK_MIGRATION_FOR_LIVE_MIGRATION:-False}
-
-    # Whitebox
-    iniset $TEMPEST_CONF whitebox source_dir $NOVA_SOURCE_DIR
-    iniset $TEMPEST_CONF whitebox bin_dir $NOVA_BIN_DIR
-    # TODO(jaypipes): Create the key file here... right now, no whitebox
-    # tests actually use a key.
-    iniset $TEMPEST_CONF whitebox path_to_private_key $TEMPEST_DIR/id_rsa
-    iniset $TEMPEST_CONF whitebox db_uri $BASE_SQL_CONN/nova
 
     # Compute admin
     iniset $TEMPEST_CONF "compute-admin" password "$password" # DEPRECATED
@@ -286,6 +273,9 @@ function configure_tempest() {
     iniset $TEMPEST_CONF scenario large_ops_number ${TEMPEST_LARGE_OPS_NUMBER:-0}
 
     # Volume
+    if is_service_enabled c-bak; then
+        iniset $TEMPEST_CONF volume volume_backup_enabled "True"
+    fi
     CINDER_MULTI_LVM_BACKEND=$(trueorfalse False $CINDER_MULTI_LVM_BACKEND)
     if [ $CINDER_MULTI_LVM_BACKEND == "True" ]; then
         iniset $TEMPEST_CONF volume multi_backend_enabled "True"

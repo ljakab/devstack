@@ -48,13 +48,13 @@ useradd $STACK_USER -s /bin/bash -d /opt/stack -G libvirtd
 echo $STACK_USER:$GUEST_PASSWORD | chpasswd
 echo "$STACK_USER ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
 
+# Add an udev rule, so that new block devices could be written by stack user
+cat > /etc/udev/rules.d/50-openstack-blockdev.rules << EOF
+KERNEL=="xvd[b-z]", GROUP="$STACK_USER", MODE="0660"
+EOF
+
 # Give ownership of /opt/stack to stack user
 chown -R $STACK_USER /opt/stack
-
-# Make our ip address hostnames look nice at the command prompt
-echo "export PS1='${debian_chroot:+($debian_chroot)}\\u@\\H:\\w\\$ '" >> /opt/stack/.bashrc
-echo "export PS1='${debian_chroot:+($debian_chroot)}\\u@\\H:\\w\\$ '" >> /root/.bashrc
-echo "export PS1='${debian_chroot:+($debian_chroot)}\\u@\\H:\\w\\$ '" >> /etc/profile
 
 function setup_vimrc {
     if [ ! -e $1 ]; then
