@@ -2,7 +2,7 @@
 #
 # The following variables are assumed to be defined by certain functions:
 # ``ENABLED_SERVICES``
-# ``EROR_ON_CLONE``
+# ``ERROR_ON_CLONE``
 # ``FILES``
 # ``GLANCE_HOSTPORT``
 # ``OFFLINE``
@@ -155,6 +155,22 @@ function err_if_not_set() {
 }
 
 
+# Prints line number and "message" in warning format
+# warn $LINENO "message"
+function warn() {
+    local exitcode=$?
+    errXTRACE=$(set +o | grep xtrace)
+    set +o xtrace
+    local msg="[WARNING] ${BASH_SOURCE[2]}:$1 $2"
+    echo $msg 1>&2;
+    if [[ -n ${SCREEN_LOGDIR} ]]; then
+        echo $msg >> "${SCREEN_LOGDIR}/error.log"
+    fi
+    $errXTRACE
+    return $exitcode
+}
+
+
 # HTTP and HTTPS proxy servers are supported via the usual environment variables [1]
 # ``http_proxy``, ``https_proxy`` and ``no_proxy``. They can be set in
 # ``localrc`` or on the command line if necessary::
@@ -248,7 +264,7 @@ function _get_package_dir() {
 # - ``# dist:DISTRO`` or ``dist:DISTRO1,DISTRO2`` limits the selection
 #   of the package to the distros listed.  The distro names are case insensitive.
 function get_packages() {
-    local services=$1
+    local services=$@
     local package_dir=$(_get_package_dir)
     local file_to_parse
     local service
@@ -260,7 +276,7 @@ function get_packages() {
     if [[ -z "$DISTRO" ]]; then
         GetDistro
     fi
-    for service in general ${services//,/ }; do
+    for service in ${services//,/ }; do
         # Allow individual services to specify dependencies
         if [[ -e ${package_dir}/${service} ]]; then
             file_to_parse="${file_to_parse} $service"
@@ -364,7 +380,7 @@ function get_packages() {
 # GetOSVersion
 GetOSVersion() {
     # Figure out which vendor we are
-    if [[ -n "`which sw_vers 2>/dev/null`" ]]; then
+    if [[ -x "`which sw_vers 2>/dev/null`" ]]; then
         # OS/X
         os_VENDOR=`sw_vers -productName`
         os_RELEASE=`sw_vers -productVersion`
@@ -551,12 +567,13 @@ function git_clone {
     GIT_REMOTE=$1
     GIT_DEST=$2
     GIT_REF=$3
+    RECLONE=$(trueorfalse False $RECLONE)
 
     if [[ "$OFFLINE" = "True" ]]; then
         echo "Running in offline mode, clones already exist"
         # print out the results so we know what change was used in the logs
         cd $GIT_DEST
-        git show --oneline
+        git show --oneline | head -1
         return
     fi
 
@@ -576,7 +593,7 @@ function git_clone {
             cd $GIT_DEST
             # This checkout syntax works for both branches and tags
             git checkout $GIT_REF
-        elif [[ "$RECLONE" == "yes" ]]; then
+        elif [[ "$RECLONE" = "True" ]]; then
             # if it does exist then simulate what clone does if asked to RECLONE
             cd $GIT_DEST
             # set the url to pull from and fetch
@@ -604,7 +621,7 @@ function git_clone {
 
     # print out the results so we know what change was used in the logs
     cd $GIT_DEST
-    git show --oneline
+    git show --oneline | head -1
 }
 
 
@@ -925,7 +942,7 @@ function uninstall_package() {
     elif is_fedora; then
         sudo yum remove -y "$@"
     elif is_suse; then
-        sudo rpm -e "$@"
+        sudo zypper rm "$@"
     else
         exit_distro_not_supported "uninstalling packages"
     fi
@@ -1226,7 +1243,10 @@ function setup_develop() {
     echo "cd $REQUIREMENTS_DIR; $SUDO_CMD python update.py $project_dir"
 
     # Don't update repo if local changes exist
-    if (cd $project_dir && git diff --quiet); then
+    (cd $project_dir && git diff --quiet)
+    local update_requirements=$?
+
+    if [ $update_requirements -eq 0 ]; then
         (cd $REQUIREMENTS_DIR; \
             $SUDO_CMD python update.py $project_dir)
     fi
@@ -1234,6 +1254,11 @@ function setup_develop() {
     pip_install -e $project_dir
     # ensure that further actions can do things like setup.py sdist
     safe_chown -R $STACK_USER $1/*.egg-info
+
+    # Undo requirements changes, if we made them
+    if [ $update_requirements -eq 0 ]; then
+        (cd $project_dir && git checkout -- requirements.txt test-requirements.txt setup.py)
+    fi
 }
 
 
@@ -1260,16 +1285,16 @@ function stop_service() {
 
 
 # Normalize config values to True or False
-# Accepts as False: 0 no false False FALSE
-# Accepts as True: 1 yes true True TRUE
+# Accepts as False: 0 no No NO false False FALSE
+# Accepts as True: 1 yes Yes YES true True TRUE
 # VAR=$(trueorfalse default-value test-value)
 function trueorfalse() {
     local default=$1
     local testval=$2
 
     [[ -z "$testval" ]] && { echo "$default"; return; }
-    [[ "0 no false False FALSE" =~ "$testval" ]] && { echo "False"; return; }
-    [[ "1 yes true True TRUE" =~ "$testval" ]] && { echo "True"; return; }
+    [[ "0 no No NO false False FALSE" =~ "$testval" ]] && { echo "False"; return; }
+    [[ "1 yes Yes YES true True TRUE" =~ "$testval" ]] && { echo "True"; return; }
     echo "$default"
 }
 
@@ -1326,7 +1351,7 @@ function upload_image() {
             vmdk_net_adapter="${props[2]}"
         fi
 
-        glance --os-auth-token $token --os-image-url http://$GLANCE_HOSTPORT image-create --name "$IMAGE_NAME" --is-public=True --container-format bare --disk-format vmdk --property vmware-disktype="$vmdk_disktype" --property vmware_adaptertype="$vmdk_adapter_type" --property hw_vif_model="$vmdk_net_adapter" < "${IMAGE}"
+        glance --os-auth-token $token --os-image-url http://$GLANCE_HOSTPORT image-create --name "$IMAGE_NAME" --is-public=True --container-format bare --disk-format vmdk --property vmware_disktype="$vmdk_disktype" --property vmware_adaptertype="$vmdk_adapter_type" --property hw_vif_model="$vmdk_net_adapter" < "${IMAGE}"
         return
     fi
 
@@ -1475,7 +1500,7 @@ function use_exclusive_service {
 function wait_for_service() {
     local timeout=$1
     local url=$2
-    timeout $timeout sh -c "while ! http_proxy= https_proxy= curl -s $url >/dev/null; do sleep 1; done"
+    timeout $timeout sh -c "while ! curl --noproxy '*' -s $url >/dev/null; do sleep 1; done"
 }
 
 
@@ -1744,6 +1769,25 @@ function policy_add() {
     mv ${tmpfile} ${policy_file}
 }
 
+
+# This function sets log formatting options for colorizing log
+# output to stdout. It is meant to be called by lib modules.
+# The last two parameters are optional and can be used to specify
+# non-default value for project and user format variables.
+# Defaults are respectively 'project_name' and 'user_name'
+#
+# setup_colorized_logging something.conf SOMESECTION
+function setup_colorized_logging() {
+    local conf_file=$1
+    local conf_section=$2
+    local project_var=${3:-"project_name"}
+    local user_var=${4:-"user_name"}
+    # Add color to logging output
+    iniset $conf_file $conf_section logging_context_format_string "%(asctime)s.%(msecs)03d %(color)s%(levelname)s %(name)s [[01;36m%(request_id)s [00;36m%("$user_var")s %("$project_var")s%(color)s] [01;35m%(instance)s%(color)s%(message)s[00m"
+    iniset $conf_file $conf_section logging_default_format_string "%(asctime)s.%(msecs)03d %(color)s%(levelname)s %(name)s [[00;36m-%(color)s] [01;35m%(instance)s%(color)s%(message)s[00m"
+    iniset $conf_file $conf_section logging_debug_format_suffix "[00;33mfrom (pid=%(process)d) %(funcName)s %(pathname)s:%(lineno)d[00m"
+    iniset $conf_file $conf_section logging_exception_prefix "%(color)s%(asctime)s.%(msecs)03d TRACE %(name)s [01;35m%(instance)s[00m"
+}
 
 # Restore xtrace
 $XTRACE

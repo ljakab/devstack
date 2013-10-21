@@ -96,6 +96,10 @@ create_directory_for_images
 #
 # Configure Networking
 #
+
+MGT_NETWORK=`xe pif-list management=true params=network-uuid minimal=true`
+MGT_BRIDGE_OR_NET_NAME=`xe network-list uuid=$MGT_NETWORK params=bridge minimal=true`
+
 setup_network "$VM_BRIDGE_OR_NET_NAME"
 setup_network "$MGT_BRIDGE_OR_NET_NAME"
 setup_network "$PUB_BRIDGE_OR_NET_NAME"
@@ -203,6 +207,7 @@ if [ -z "$templateuuid" ]; then
     #
     # Install Ubuntu over network
     #
+    UBUNTU_INST_BRIDGE_OR_NET_NAME=${UBUNTU_INST_BRIDGE_OR_NET_NAME:-"$MGT_BRIDGE_OR_NET_NAME"}
 
     # always update the preseed file, incase we have a newer one
     PRESEED_URL=${PRESEED_URL:-""}
@@ -262,6 +267,9 @@ $THIS_DIR/prepare_guest_template.sh "$GUEST_NAME"
 
 # Set virtual machine parameters
 set_vm_memory "$GUEST_NAME" "$OSDOMU_MEM_MB"
+
+# Max out VCPU count for better performance
+max_vcpus "$GUEST_NAME"
 
 # start the VM to run the prepare steps
 xe vm-start vm="$GUEST_NAME"

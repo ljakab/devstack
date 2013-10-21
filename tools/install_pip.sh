@@ -9,6 +9,9 @@
 # Assumptions:
 # - update pip to $INSTALL_PIP_VERSION
 
+set -o errexit
+set -o xtrace
+
 # Keep track of the current directory
 TOOLS_DIR=$(cd $(dirname "$0") && pwd)
 TOP_DIR=`cd $TOOLS_DIR/..; pwd`
@@ -47,10 +50,12 @@ GetDistro
 echo "Distro: $DISTRO"
 
 function get_versions() {
-    PIP=$(which pip 2>/dev/null || which pip-python 2>/dev/null)
+    PIP=$(which pip 2>/dev/null || which pip-python 2>/dev/null || true)
     if [[ -n $PIP ]]; then
         PIP_VERSION=$($PIP --version | awk '{ print $2}')
         echo "pip: $PIP_VERSION"
+    else
+        echo "pip: Not Installed"
     fi
 }
 
@@ -67,9 +72,9 @@ function install_get_pip() {
 function install_pip_tarball() {
     (cd $FILES; \
         curl -O $PIP_TAR_URL; \
-        tar xvfz pip-$INSTALL_PIP_VERSION.tar.gz; \
+        tar xvfz pip-$INSTALL_PIP_VERSION.tar.gz 1>/dev/null; \
         cd pip-$INSTALL_PIP_VERSION; \
-        sudo python setup.py install; \
+        sudo python setup.py install 1>/dev/null; \
     )
 }
 

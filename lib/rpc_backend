@@ -63,7 +63,7 @@ function cleanup_rpc_backend {
     if is_service_enabled rabbit; then
         # Obliterate rabbitmq-server
         uninstall_package rabbitmq-server
-        sudo killall epmd
+        sudo killall epmd || sudo killall -9 epmd
         if is_ubuntu; then
             # And the Erlang runtime too
             sudo aptitude purge -y ~nerlang
@@ -86,10 +86,6 @@ function cleanup_rpc_backend {
         else
             exit_distro_not_supported "zeromq installation"
         fi
-
-        # Necessary directory for socket location.
-        sudo mkdir -p /var/run/openstack
-        sudo chown $STACK_USER /var/run/openstack
     fi
 }
 
@@ -131,6 +127,9 @@ function install_rpc_backend() {
         else
             exit_distro_not_supported "zeromq installation"
         fi
+        # Necessary directory for socket location.
+        sudo mkdir -p /var/run/openstack
+        sudo chown $STACK_USER /var/run/openstack
     fi
 }
 

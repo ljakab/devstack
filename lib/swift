@@ -39,6 +39,7 @@ SWIFT3_DIR=$DEST/swift3
 # Set ``SWIFT_DATA_DIR`` to the location of swift drives and objects.
 # Default is the common DevStack data directory.
 SWIFT_DATA_DIR=${SWIFT_DATA_DIR:-${DATA_DIR}/swift}
+SWIFT_DISK_IMAGE=${SWIFT_DATA_DIR}/drives/images/swift.img
 
 # Set ``SWIFT_CONF_DIR`` to the location of the configuration files.
 # Default is ``/etc/swift``.
@@ -55,10 +56,10 @@ fi
 # swift data. Set ``SWIFT_LOOPBACK_DISK_SIZE`` to the disk size in
 # kilobytes.
 # Default is 1 gigabyte.
-SWIFT_LOOPBACK_DISK_SIZE_DEFAULT=1048576
+SWIFT_LOOPBACK_DISK_SIZE_DEFAULT=1G
 # if tempest enabled the default size is 4 Gigabyte.
 if is_service_enabled tempest; then
-    SWIFT_LOOPBACK_DISK_SIZE_DEFAULT=${SWIFT_LOOPBACK_DISK_SIZE:-4194304}
+    SWIFT_LOOPBACK_DISK_SIZE_DEFAULT=${SWIFT_LOOPBACK_DISK_SIZE:-4G}
 fi
 
 SWIFT_LOOPBACK_DISK_SIZE=${SWIFT_LOOPBACK_DISK_SIZE:-$SWIFT_LOOPBACK_DISK_SIZE_DEFAULT}
@@ -66,6 +67,10 @@ SWIFT_LOOPBACK_DISK_SIZE=${SWIFT_LOOPBACK_DISK_SIZE:-$SWIFT_LOOPBACK_DISK_SIZE_D
 # Set ``SWIFT_EXTRAS_MIDDLEWARE`` to extras middlewares.
 # Default is ``staticweb, tempurl, formpost``
 SWIFT_EXTRAS_MIDDLEWARE=${SWIFT_EXTRAS_MIDDLEWARE:-tempurl formpost staticweb}
+
+# Set ``SWIFT_EXTRAS_MIDDLEWARE_LAST`` to extras middlewares that need to be at
+# the end of the pipeline.
+SWIFT_EXTRAS_MIDDLEWARE_LAST=${SWIFT_EXTRAS_MIDDLEWARE_LAST}
 
 # The ring uses a configurable number of bits from a path’s MD5 hash as
 # a partition index that designates a device. The number of bits kept
@@ -103,8 +108,8 @@ function cleanup_swift() {
    if egrep -q ${SWIFT_DATA_DIR}/drives/sdb1 /proc/mounts; then
       sudo umount ${SWIFT_DATA_DIR}/drives/sdb1
    fi
-   if [[ -e ${SWIFT_DATA_DIR}/drives/images/swift.img ]]; then
-      rm ${SWIFT_DATA_DIR}/drives/images/swift.img
+   if [[ -e ${SWIFT_DISK_IMAGE} ]]; then
+      rm ${SWIFT_DISK_IMAGE}
    fi
    rm -rf ${SWIFT_DATA_DIR}/run/
    if is_apache_enabled_service swift; then
@@ -115,11 +120,11 @@ function cleanup_swift() {
 # _cleanup_swift_apache_wsgi() - Remove wsgi files, disable and remove apache vhost file
 function _cleanup_swift_apache_wsgi() {
     sudo rm -f $SWIFT_APACHE_WSGI_DIR/*.wsgi
-    ! is_fedora && sudo a2dissite proxy-server
+    disable_apache_site proxy-server
     for node_number in ${SWIFT_REPLICAS_SEQ}; do
         for type in object container account; do
             site_name=${type}-server-${node_number}
-            ! is_fedora && sudo a2dissite ${site_name}
+            disable_apache_site ${site_name}
             sudo rm -f /etc/$APACHE_NAME/$APACHE_CONF_DIR/${site_name}
         done
     done
@@ -140,13 +145,13 @@ function _config_swift_apache_wsgi() {
         s/%APACHE_NAME%/${APACHE_NAME}/g;
         s/%USER%/${STACK_USER}/g;
     " -i ${apache_vhost_dir}/proxy-server
+    enable_apache_site proxy-server
 
     sudo cp ${SWIFT_DIR}/examples/wsgi/proxy-server.wsgi.template ${SWIFT_APACHE_WSGI_DIR}/proxy-server.wsgi
     sudo sed -e "
         /^#/d;/^$/d;
         s/%SERVICECONF%/proxy-server.conf/g;
     " -i ${SWIFT_APACHE_WSGI_DIR}/proxy-server.wsgi
-    ! is_fedora && sudo a2ensite proxy-server
 
     # copy apache vhost file and set name and port
     for node_number in ${SWIFT_REPLICAS_SEQ}; do
@@ -161,7 +166,7 @@ function _config_swift_apache_wsgi() {
             s/%APACHE_NAME%/${APACHE_NAME}/g;
             s/%USER%/${STACK_USER}/g;
         " -i ${apache_vhost_dir}/object-server-${node_number}
-        ! is_fedora && sudo a2ensite object-server-${node_number}
+        enable_apache_site object-server-${node_number}
 
         sudo cp ${SWIFT_DIR}/examples/wsgi/object-server.wsgi.template ${SWIFT_APACHE_WSGI_DIR}/object-server-${node_number}.wsgi
         sudo sed -e "
@@ -177,7 +182,7 @@ function _config_swift_apache_wsgi() {
             s/%APACHE_NAME%/${APACHE_NAME}/g;
             s/%USER%/${STACK_USER}/g;
         " -i ${apache_vhost_dir}/container-server-${node_number}
-        ! is_fedora && sudo a2ensite container-server-${node_number}
+        enable_apache_site container-server-${node_number}
 
         sudo cp ${SWIFT_DIR}/examples/wsgi/container-server.wsgi.template ${SWIFT_APACHE_WSGI_DIR}/container-server-${node_number}.wsgi
         sudo sed -e "
@@ -193,18 +198,14 @@ function _config_swift_apache_wsgi() {
             s/%APACHE_NAME%/${APACHE_NAME}/g;
             s/%USER%/${STACK_USER}/g;
         " -i ${apache_vhost_dir}/account-server-${node_number}
-        ! is_fedora && sudo a2ensite account-server-${node_number}
+        enable_apache_site account-server-${node_number}
 
         sudo cp ${SWIFT_DIR}/examples/wsgi/account-server.wsgi.template ${SWIFT_APACHE_WSGI_DIR}/account-server-${node_number}.wsgi
         sudo sed -e "
              /^#/d;/^$/d;
             s/%SERVICECONF%/account-server\/${node_number}.conf/g;
         " -i ${SWIFT_APACHE_WSGI_DIR}/account-server-${node_number}.wsgi
-
     done
-
-    # WSGI isn't enabled by default, enable it
-    ! is_fedora && sudo a2enmod wsgi
 }
 
 # configure_swift() - Set config files, create data dirs and loop image
@@ -259,6 +260,12 @@ function configure_swift() {
     iniuncomment ${SWIFT_CONFIG_PROXY_SERVER} DEFAULT bind_port
     iniset ${SWIFT_CONFIG_PROXY_SERVER} DEFAULT bind_port ${SWIFT_DEFAULT_BIND_PORT:-8080}
 
+    # Configure Ceilometer
+    if is_service_enabled ceilometer; then
+        iniset ${SWIFT_CONFIG_PROXY_SERVER} filter:ceilometer use "egg:ceilometer#swift"
+        SWIFT_EXTRAS_MIDDLEWARE_LAST="${SWIFT_EXTRAS_MIDDLEWARE_LAST} ceilometer"
+    fi
+
     # By default Swift will be installed with keystone and tempauth middleware
     # and add the swift3 middleware if its configured for it. The token for
     # tempauth would be prefixed with the reseller_prefix setting TEMPAUTH_ the
@@ -268,6 +275,7 @@ function configure_swift() {
     fi
     swift_pipeline+=" authtoken keystoneauth tempauth "
     sed -i "/^pipeline/ { s/tempauth/${swift_pipeline} ${SWIFT_EXTRAS_MIDDLEWARE}/ ;}" ${SWIFT_CONFIG_PROXY_SERVER}
+    sed -i "/^pipeline/ { s/proxy-server/${SWIFT_EXTRAS_MIDDLEWARE_LAST} proxy-server/ ; }" ${SWIFT_CONFIG_PROXY_SERVER}
 
     iniuncomment ${SWIFT_CONFIG_PROXY_SERVER} filter:tempauth account_autocreate
     iniset ${SWIFT_CONFIG_PROXY_SERVER} app:proxy-server account_autocreate true
@@ -413,28 +421,27 @@ function create_swift_disk() {
     sudo chown -R $USER:${USER_GROUP} ${SWIFT_DATA_DIR}
 
     # Create a loopback disk and format it to XFS.
-    if [[ -e ${SWIFT_DATA_DIR}/drives/images/swift.img ]]; then
+    if [[ -e ${SWIFT_DISK_IMAGE} ]]; then
         if egrep -q ${SWIFT_DATA_DIR}/drives/sdb1 /proc/mounts; then
             sudo umount ${SWIFT_DATA_DIR}/drives/sdb1
-            sudo rm -f ${SWIFT_DATA_DIR}/drives/images/swift.img
+            sudo rm -f ${SWIFT_DISK_IMAGE}
         fi
     fi
 
     mkdir -p ${SWIFT_DATA_DIR}/drives/images
-    sudo touch ${SWIFT_DATA_DIR}/drives/images/swift.img
-    sudo chown $USER: ${SWIFT_DATA_DIR}/drives/images/swift.img
+    sudo touch ${SWIFT_DISK_IMAGE}
+    sudo chown $USER: ${SWIFT_DISK_IMAGE}
 
-    dd if=/dev/zero of=${SWIFT_DATA_DIR}/drives/images/swift.img \
-        bs=1024 count=0 seek=${SWIFT_LOOPBACK_DISK_SIZE}
+    truncate -s ${SWIFT_LOOPBACK_DISK_SIZE} ${SWIFT_DISK_IMAGE}
 
     # Make a fresh XFS filesystem
-    mkfs.xfs -f -i size=1024  ${SWIFT_DATA_DIR}/drives/images/swift.img
+    mkfs.xfs -f -i size=1024  ${SWIFT_DISK_IMAGE}
 
     # Mount the disk with mount options to make it as efficient as possible
     mkdir -p ${SWIFT_DATA_DIR}/drives/sdb1
     if ! egrep -q ${SWIFT_DATA_DIR}/drives/sdb1 /proc/mounts; then
         sudo mount -t xfs -o loop,noatime,nodiratime,nobarrier,logbufs=8  \
-            ${SWIFT_DATA_DIR}/drives/images/swift.img ${SWIFT_DATA_DIR}/drives/sdb1
+            ${SWIFT_DISK_IMAGE} ${SWIFT_DATA_DIR}/drives/sdb1
     fi
 
     # Create a link to the above mount and

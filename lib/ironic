@@ -148,9 +148,9 @@ create_ironic_accounts() {
             keystone endpoint-create \
                 --region RegionOne \
                 --service_id $IRONIC_SERVICE \
-                --publicurl "$IRONIC_SERVICE_PROTOCOL://$IRONIC_HOSTPORT/v1/" \
-                --adminurl "$IRONIC_SERVICE_PROTOCOL://$IRONIC_HOSTPORT/v1/" \
-                --internalurl "$IRONIC_SERVICE_PROTOCOL://$IRONIC_HOSTPORT/v1/"
+                --publicurl "$IRONIC_SERVICE_PROTOCOL://$IRONIC_HOSTPORT" \
+                --adminurl "$IRONIC_SERVICE_PROTOCOL://$IRONIC_HOSTPORT" \
+                --internalurl "$IRONIC_SERVICE_PROTOCOL://$IRONIC_HOSTPORT"
         fi
     fi
 }
@@ -194,7 +194,7 @@ function start_ironic() {
 function start_ironic_api() {
     screen_it ir-api "cd $IRONIC_DIR; $IRONIC_BIN_DIR/ironic-api --config-file=$IRONIC_CONF_FILE"
     echo "Waiting for ir-api ($IRONIC_HOSTPORT) to start..."
-    if ! timeout $SERVICE_TIMEOUT sh -c "while ! http_proxy= wget -q -O- http://$IRONIC_HOSTPORT; do sleep 1; done"; then
+    if ! timeout $SERVICE_TIMEOUT sh -c "while ! wget --no-proxy -q -O- http://$IRONIC_HOSTPORT; do sleep 1; done"; then
       die $LINENO "ir-api did not start"
     fi
 }
