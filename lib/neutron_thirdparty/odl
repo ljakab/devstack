@@ -57,7 +57,7 @@ function start_odl() {
     else
         JHOME=/usr/lib/jvm/java-1.7.0-openjdk.x86_64
     fi
-    screen_it odl "cd $ODL_DIR/opendaylight/distribution/opendaylight/target/distribution.opendaylight-0.1.0-SNAPSHOT-osgipackage/opendaylight && JAVA_HOME=$JHOME ./run.sh"
+    screen_it odl "cd $ODL_DIR/opendaylight/distribution/opendaylight/target/distribution.opendaylight-osgipackage/opendaylight && JAVA_HOME=$JHOME ./run.sh"
 }
 
 function stop_odl() {
