@@ -2,12 +2,15 @@
 # Install and start **Ceilometer** service
 
 # To enable a minimal set of Ceilometer services, add the following to localrc:
+#
 #   enable_service ceilometer-acompute ceilometer-acentral ceilometer-collector ceilometer-api
 #
 # To ensure Ceilometer alarming services are enabled also, further add to the localrc:
+#
 #   enable_service ceilometer-alarm-notifier ceilometer-alarm-evaluator
 
 # Dependencies:
+#
 # - functions
 # - OS_AUTH_URL for auth in api
 # - DEST set to the destination directory
@@ -16,12 +19,12 @@
 
 # stack.sh
 # ---------
-# install_ceilometer
-# configure_ceilometer
-# init_ceilometer
-# start_ceilometer
-# stop_ceilometer
-# cleanup_ceilometer
+# - install_ceilometer
+# - configure_ceilometer
+# - init_ceilometer
+# - start_ceilometer
+# - stop_ceilometer
+# - cleanup_ceilometer
 
 # Save trace setting
 XTRACE=$(set +o | grep xtrace)
@@ -91,7 +94,7 @@ function configure_ceilometer() {
     iniset $CEILOMETER_CONF keystone_authtoken admin_tenant_name $SERVICE_TENANT_NAME
     iniset $CEILOMETER_CONF keystone_authtoken signing_dir $CEILOMETER_AUTH_CACHE_DIR
 
-    if [[ "$CEILOMETER_BACKEND" = 'mysql' ]]; then
+    if [ "$CEILOMETER_BACKEND" = 'mysql' ] || [ "$CEILOMETER_BACKEND" = 'postgresql' ] ; then
         iniset $CEILOMETER_CONF database connection `database_connection_url ceilometer`
     else
         iniset $CEILOMETER_CONF database connection mongodb://localhost:27017/ceilometer
@@ -116,7 +119,7 @@ function init_ceilometer() {
     sudo chown $STACK_USER $CEILOMETER_AUTH_CACHE_DIR
     rm -f $CEILOMETER_AUTH_CACHE_DIR/*
 
-    if [[ "$CEILOMETER_BACKEND" = 'mysql' ]]; then
+    if [ "$CEILOMETER_BACKEND" = 'mysql' ] || [ "$CEILOMETER_BACKEND" = 'postgresql' ] ; then
         recreate_database ceilometer utf8
         $CEILOMETER_BIN_DIR/ceilometer-dbsync
     fi
@@ -138,6 +141,12 @@ function start_ceilometer() {
     screen_it ceilometer-acentral "cd ; ceilometer-agent-central --config-file $CEILOMETER_CONF"
     screen_it ceilometer-collector "cd ; ceilometer-collector --config-file $CEILOMETER_CONF"
     screen_it ceilometer-api "cd ; ceilometer-api -d -v --log-dir=$CEILOMETER_API_LOG_DIR --config-file $CEILOMETER_CONF"
+
+    echo "Waiting for ceilometer-api to start..."
+    if ! timeout $SERVICE_TIMEOUT sh -c "while ! curl --noproxy '*' -s http://localhost:8777/v2/ >/dev/null; do sleep 1; done"; then
+        die $LINENO "ceilometer-api did not start"
+    fi
+
     screen_it ceilometer-alarm-notifier "cd ; ceilometer-alarm-notifier --config-file $CEILOMETER_CONF"
     screen_it ceilometer-alarm-evaluator "cd ; ceilometer-alarm-evaluator --config-file $CEILOMETER_CONF"
 }
@@ -154,6 +163,7 @@ function stop_ceilometer() {
 # Restore xtrace
 $XTRACE
 
-# Local variables:
-# mode: shell-script
-# End:
+# Tell emacs to use shell-script-mode
+## Local variables:
+## mode: shell-script
+## End:

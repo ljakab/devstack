@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 
-# **swift.sh**
+# **savanna.sh**
 
-# Test swift via the ``swift`` command line from ``python-swiftclient``
+# Sanity check that Savanna started if enabled
 
 echo "*********************************************************************"
 echo "Begin DevStack Exercise: $0"
@@ -33,32 +33,9 @@ source $TOP_DIR/openrc
 # Import exercise configuration
 source $TOP_DIR/exerciserc
 
-# If swift is not enabled we exit with exitcode 55 which mean
-# exercise is skipped.
-is_service_enabled s-proxy || exit 55
+is_service_enabled savanna || exit 55
 
-# Container name
-CONTAINER=ex-swift
-
-
-# Testing Swift
-# =============
-
-# Check if we have to swift via keystone
-swift stat || die $LINENO "Failure geting status"
-
-# We start by creating a test container
-swift post $CONTAINER || die $LINENO "Failure creating container $CONTAINER"
-
-# add some files into it.
-swift upload $CONTAINER /etc/issue || die $LINENO "Failure uploading file to container $CONTAINER"
-
-# list them
-swift list $CONTAINER || die $LINENO "Failure listing contents of container $CONTAINER"
-
-# And we may want to delete them now that we have tested that
-# everything works.
-swift delete $CONTAINER || die $LINENO "Failure deleting container $CONTAINER"
+curl http://$SERVICE_HOST:8386/ 2>/dev/null | grep -q 'Auth' || die $LINENO "Savanna API not functioning!"
 
 set +o xtrace
 echo "*********************************************************************"

@@ -2,22 +2,24 @@
 # Functions to control the configuration and operation of the **Swift** service
 
 # Dependencies:
-# ``functions`` file
-# ``apache`` file
-# ``DEST``, ``SCREEN_NAME``, `SWIFT_HASH` must be defined
-# ``STACK_USER`` must be defined
-# ``SWIFT_DATA_DIR`` or ``DATA_DIR`` must be defined
-# ``lib/keystone`` file
+#
+# - ``functions`` file
+# - ``apache`` file
+# - ``DEST``, ``SCREEN_NAME``, `SWIFT_HASH` must be defined
+# - ``STACK_USER`` must be defined
+# - ``SWIFT_DATA_DIR`` or ``DATA_DIR`` must be defined
+# - ``lib/keystone`` file
+#
 # ``stack.sh`` calls the entry points in this order:
 #
-# install_swift
-# _config_swift_apache_wsgi
-# configure_swift
-# init_swift
-# start_swift
-# stop_swift
-# cleanup_swift
-# _cleanup_swift_apache_wsgi
+# - install_swift
+# - _config_swift_apache_wsgi
+# - configure_swift
+# - init_swift
+# - start_swift
+# - stop_swift
+# - cleanup_swift
+# - _cleanup_swift_apache_wsgi
 
 # Save trace setting
 XTRACE=$(set +o | grep xtrace)
@@ -72,6 +74,10 @@ SWIFT_EXTRAS_MIDDLEWARE=${SWIFT_EXTRAS_MIDDLEWARE:-tempurl formpost staticweb}
 # the end of the pipeline.
 SWIFT_EXTRAS_MIDDLEWARE_LAST=${SWIFT_EXTRAS_MIDDLEWARE_LAST}
 
+# Set ``SWIFT_EXTRAS_MIDDLEWARE_NO_AUTH`` to extras middlewares that need to be at
+# the beginning of the pipeline, before authentication middlewares.
+SWIFT_EXTRAS_MIDDLEWARE_NO_AUTH=${SWIFT_EXTRAS_MIDDLEWARE_NO_AUTH:-crossdomain}
+
 # The ring uses a configurable number of bits from a path’s MD5 hash as
 # a partition index that designates a device. The number of bits kept
 # from the hash is known as the partition power, and 2 to the partition
@@ -104,17 +110,17 @@ ACCOUNT_PORT_BASE=${ACCOUNT_PORT_BASE:-6012}
 
 # cleanup_swift() - Remove residual data files
 function cleanup_swift() {
-   rm -f ${SWIFT_CONF_DIR}{*.builder,*.ring.gz,backups/*.builder,backups/*.ring.gz}
-   if egrep -q ${SWIFT_DATA_DIR}/drives/sdb1 /proc/mounts; then
-      sudo umount ${SWIFT_DATA_DIR}/drives/sdb1
-   fi
-   if [[ -e ${SWIFT_DISK_IMAGE} ]]; then
-      rm ${SWIFT_DISK_IMAGE}
-   fi
-   rm -rf ${SWIFT_DATA_DIR}/run/
-   if is_apache_enabled_service swift; then
-       _cleanup_swift_apache_wsgi
-   fi
+    rm -f ${SWIFT_CONF_DIR}{*.builder,*.ring.gz,backups/*.builder,backups/*.ring.gz}
+    if egrep -q ${SWIFT_DATA_DIR}/drives/sdb1 /proc/mounts; then
+        sudo umount ${SWIFT_DATA_DIR}/drives/sdb1
+    fi
+    if [[ -e ${SWIFT_DISK_IMAGE} ]]; then
+        rm ${SWIFT_DISK_IMAGE}
+    fi
+    rm -rf ${SWIFT_DATA_DIR}/run/
+    if is_apache_enabled_service swift; then
+        _cleanup_swift_apache_wsgi
+    fi
 }
 
 # _cleanup_swift_apache_wsgi() - Remove wsgi files, disable and remove apache vhost file
@@ -192,7 +198,7 @@ function _config_swift_apache_wsgi() {
 
         sudo cp ${SWIFT_DIR}/examples/apache2/account-server.template ${apache_vhost_dir}/account-server-${node_number}
         sudo sed -e "
-             /^#/d;/^$/d;
+            /^#/d;/^$/d;
             s/%PORT%/$account_port/g;
             s/%SERVICENAME%/account-server-${node_number}/g;
             s/%APACHE_NAME%/${APACHE_NAME}/g;
@@ -202,7 +208,7 @@ function _config_swift_apache_wsgi() {
 
         sudo cp ${SWIFT_DIR}/examples/wsgi/account-server.wsgi.template ${SWIFT_APACHE_WSGI_DIR}/account-server-${node_number}.wsgi
         sudo sed -e "
-             /^#/d;/^$/d;
+            /^#/d;/^$/d;
             s/%SERVICECONF%/account-server\/${node_number}.conf/g;
         " -i ${SWIFT_APACHE_WSGI_DIR}/account-server-${node_number}.wsgi
     done
@@ -210,7 +216,7 @@ function _config_swift_apache_wsgi() {
 
 # configure_swift() - Set config files, create data dirs and loop image
 function configure_swift() {
-    local swift_pipeline=" "
+    local swift_pipeline="${SWIFT_EXTRAS_MIDDLEWARE_NO_AUTH}"
     local node_number
     local swift_node_config
     local swift_log_dir
@@ -268,10 +274,10 @@ function configure_swift() {
 
     # By default Swift will be installed with keystone and tempauth middleware
     # and add the swift3 middleware if its configured for it. The token for
-    # tempauth would be prefixed with the reseller_prefix setting TEMPAUTH_ the
-    # token for keystoneauth would have the standard reseller_prefix AUTH_
+    # tempauth would be prefixed with the reseller_prefix setting `TEMPAUTH_` the
+    # token for keystoneauth would have the standard reseller_prefix `AUTH_`
     if is_service_enabled swift3;then
-        swift_pipeline=" swift3 s3token "
+        swift_pipeline+=" swift3 s3token "
     fi
     swift_pipeline+=" authtoken keystoneauth tempauth "
     sed -i "/^pipeline/ { s/tempauth/${swift_pipeline} ${SWIFT_EXTRAS_MIDDLEWARE}/ ;}" ${SWIFT_CONFIG_PROXY_SERVER}
@@ -282,6 +288,9 @@ function configure_swift() {
 
     iniuncomment ${SWIFT_CONFIG_PROXY_SERVER} filter:tempauth reseller_prefix
     iniset ${SWIFT_CONFIG_PROXY_SERVER} filter:tempauth reseller_prefix "TEMPAUTH"
+
+    # Configure Crossdomain
+    iniset ${SWIFT_CONFIG_PROXY_SERVER} filter:crossdomain use "egg:swift#crossdomain"
 
     # Configure Keystone
     sed -i '/^# \[filter:authtoken\]/,/^# \[filter:keystoneauth\]$/ s/^#[ \t]*//' ${SWIFT_CONFIG_PROXY_SERVER}
@@ -577,26 +586,26 @@ function start_swift() {
         return 0
     fi
 
-   # By default with only one replica we are launching the proxy,
-   # container, account and object server in screen in foreground and
-   # other services in background. If we have SWIFT_REPLICAS set to something
-   # greater than one we first spawn all the swift services then kill the proxy
-   # service so we can run it in foreground in screen.  ``swift-init ...
-   # {stop|restart}`` exits with '1' if no servers are running, ignore it just
-   # in case
-   swift-init --run-dir=${SWIFT_DATA_DIR}/run all restart || true
-   if [[ ${SWIFT_REPLICAS} == 1 ]]; then
+    # By default with only one replica we are launching the proxy,
+    # container, account and object server in screen in foreground and
+    # other services in background. If we have SWIFT_REPLICAS set to something
+    # greater than one we first spawn all the swift services then kill the proxy
+    # service so we can run it in foreground in screen.  ``swift-init ...
+    # {stop|restart}`` exits with '1' if no servers are running, ignore it just
+    # in case
+    swift-init --run-dir=${SWIFT_DATA_DIR}/run all restart || true
+    if [[ ${SWIFT_REPLICAS} == 1 ]]; then
         todo="object container account"
-   fi
-   for type in proxy ${todo}; do
-       swift-init --run-dir=${SWIFT_DATA_DIR}/run ${type} stop || true
-   done
-   screen_it s-proxy "cd $SWIFT_DIR && $SWIFT_DIR/bin/swift-proxy-server ${SWIFT_CONF_DIR}/proxy-server.conf -v"
-   if [[ ${SWIFT_REPLICAS} == 1 ]]; then
-       for type in object container account; do
-           screen_it s-${type} "cd $SWIFT_DIR && $SWIFT_DIR/bin/swift-${type}-server ${SWIFT_CONF_DIR}/${type}-server/1.conf -v"
-       done
-   fi
+    fi
+    for type in proxy ${todo}; do
+        swift-init --run-dir=${SWIFT_DATA_DIR}/run ${type} stop || true
+    done
+    screen_it s-proxy "cd $SWIFT_DIR && $SWIFT_DIR/bin/swift-proxy-server ${SWIFT_CONF_DIR}/proxy-server.conf -v"
+    if [[ ${SWIFT_REPLICAS} == 1 ]]; then
+        for type in object container account; do
+            screen_it s-${type} "cd $SWIFT_DIR && $SWIFT_DIR/bin/swift-${type}-server ${SWIFT_CONF_DIR}/${type}-server/1.conf -v"
+        done
+    fi
 }
 
 # stop_swift() - Stop running processes (non-screen)
@@ -617,6 +626,7 @@ function stop_swift() {
 # Restore xtrace
 $XTRACE
 
-# Local variables:
-# mode: shell-script
-# End:
+# Tell emacs to use shell-script-mode
+## Local variables:
+## mode: shell-script
+## End:

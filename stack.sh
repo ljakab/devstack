@@ -53,7 +53,7 @@ if [[ -r $TOP_DIR/local.conf ]]; then
             if [[ -r $TOP_DIR/localrc ]]; then
                 warn $LINENO "localrc and local.conf:[[local]] both exist, using localrc"
             else
-                echo "# Generated file, do not exit" >$TOP_DIR/.localrc.auto
+                echo "# Generated file, do not edit" >$TOP_DIR/.localrc.auto
                 get_meta_section $TOP_DIR/local.conf local $lfile >>$TOP_DIR/.localrc.auto
             fi
         fi
@@ -131,7 +131,7 @@ disable_negated_services
 
 # Warn users who aren't on an explicitly supported distro, but allow them to
 # override check and attempt installation with ``FORCE=yes ./stack``
-if [[ ! ${DISTRO} =~ (oneiric|precise|quantal|raring|saucy|7.0|wheezy|sid|testing|jessie|f16|f17|f18|f19|opensuse-12.2|rhel6) ]]; then
+if [[ ! ${DISTRO} =~ (oneiric|precise|quantal|raring|saucy|trusty|7.0|wheezy|sid|testing|jessie|f16|f17|f18|f19|opensuse-12.2|rhel6) ]]; then
     echo "WARNING: this script has not been tested on $DISTRO"
     if [[ "$FORCE" != "yes" ]]; then
         die $LINENO "If you wish to run this script anyway run with FORCE=yes"
@@ -299,6 +299,7 @@ source $TOP_DIR/lib/apache
 source $TOP_DIR/lib/tls
 source $TOP_DIR/lib/infra
 source $TOP_DIR/lib/oslo
+source $TOP_DIR/lib/stackforge
 source $TOP_DIR/lib/horizon
 source $TOP_DIR/lib/keystone
 source $TOP_DIR/lib/glance
@@ -588,7 +589,9 @@ echo_summary "Installing package prerequisites"
 source $TOP_DIR/tools/install_prereqs.sh
 
 # Configure an appropriate python environment
-$TOP_DIR/tools/install_pip.sh
+if [[ "$OFFLINE" != "True" ]]; then
+    $TOP_DIR/tools/install_pip.sh
+fi
 
 # Do the ugly hacks for borken packages and distros
 $TOP_DIR/tools/fixup_stuff.sh
@@ -626,6 +629,11 @@ install_infra
 
 # Install oslo libraries that have graduated
 install_oslo
+
+# Install stackforge libraries for testing
+if is_service_enabled stackforge_libs; then
+    install_stackforge
+fi
 
 # Install clients libraries
 install_keystoneclient
@@ -686,16 +694,6 @@ if is_service_enabled nova; then
     configure_nova
 fi
 
-if is_service_enabled n-novnc; then
-    # a websockets/html5 or flash powered VNC console for vm instances
-    git_clone $NOVNC_REPO $NOVNC_DIR $NOVNC_BRANCH
-fi
-
-if is_service_enabled n-spice; then
-    # a websockets/html5 or flash powered SPICE console for vm instances
-    git_clone $SPICE_REPO $SPICE_DIR $SPICE_BRANCH
-fi
-
 if is_service_enabled horizon; then
     # dashboard
     install_horizon
@@ -732,6 +730,7 @@ fi
 
 if is_service_enabled ir-api ir-cond; then
     install_ironic
+    install_ironicclient
     configure_ironic
 fi
 
@@ -840,7 +839,7 @@ init_service_check
 # If enabled, systat has to start early to track OpenStack service startup.
 if is_service_enabled sysstat;then
     if [[ -n ${SCREEN_LOGDIR} ]]; then
-        screen_it sysstat "sar -o $SCREEN_LOGDIR/$SYSSTAT_FILE $SYSSTAT_INTERVAL"
+        screen_it sysstat "cd ; sar -o $SCREEN_LOGDIR/$SYSSTAT_FILE $SYSSTAT_INTERVAL"
     else
         screen_it sysstat "sar $SYSSTAT_INTERVAL"
     fi
@@ -1015,7 +1014,7 @@ if is_service_enabled nova && is_baremetal; then
     prepare_baremetal_toolchain
     configure_baremetal_nova_dirs
     if [[ "$BM_USE_FAKE_ENV" = "True" ]]; then
-       create_fake_baremetal_env
+        create_fake_baremetal_env
     fi
 fi
 
@@ -1174,28 +1173,29 @@ fi
 
 if is_service_enabled g-reg; then
     TOKEN=$(keystone token-get | grep ' id ' | get_field 2)
+    die_if_not_set $LINENO TOKEN "Keystone fail to get token"
 
     if is_baremetal; then
-       echo_summary "Creating and uploading baremetal images"
+        echo_summary "Creating and uploading baremetal images"
 
-       # build and upload separate deploy kernel & ramdisk
-       upload_baremetal_deploy $TOKEN
+        # build and upload separate deploy kernel & ramdisk
+        upload_baremetal_deploy $TOKEN
 
-       # upload images, separating out the kernel & ramdisk for PXE boot
-       for image_url in ${IMAGE_URLS//,/ }; do
-           upload_baremetal_image $image_url $TOKEN
-       done
+        # upload images, separating out the kernel & ramdisk for PXE boot
+        for image_url in ${IMAGE_URLS//,/ }; do
+            upload_baremetal_image $image_url $TOKEN
+        done
     else
-       echo_summary "Uploading images"
+        echo_summary "Uploading images"
 
-       # Option to upload legacy ami-tty, which works with xenserver
-       if [[ -n "$UPLOAD_LEGACY_TTY" ]]; then
-           IMAGE_URLS="${IMAGE_URLS:+${IMAGE_URLS},}https://github.com/downloads/citrix-openstack/warehouse/tty.tgz"
-       fi
+        # Option to upload legacy ami-tty, which works with xenserver
+        if [[ -n "$UPLOAD_LEGACY_TTY" ]]; then
+            IMAGE_URLS="${IMAGE_URLS:+${IMAGE_URLS},}https://github.com/downloads/citrix-openstack/warehouse/tty.tgz"
+        fi
 
-       for image_url in ${IMAGE_URLS//,/ }; do
-           upload_image $image_url $TOKEN
-       done
+        for image_url in ${IMAGE_URLS//,/ }; do
+            upload_image $image_url $TOKEN
+        done
     fi
 fi
 
@@ -1207,7 +1207,7 @@ fi
 if is_service_enabled nova && is_baremetal; then
     # create special flavor for baremetal if we know what images to associate
     [[ -n "$BM_DEPLOY_KERNEL_ID" ]] && [[ -n "$BM_DEPLOY_RAMDISK_ID" ]] && \
-       create_baremetal_flavor $BM_DEPLOY_KERNEL_ID $BM_DEPLOY_RAMDISK_ID
+        create_baremetal_flavor $BM_DEPLOY_KERNEL_ID $BM_DEPLOY_RAMDISK_ID
 
     # otherwise user can manually add it later by calling nova-baremetal-manage
     [[ -n "$BM_FIRST_MAC" ]] && add_baremetal_node
@@ -1222,14 +1222,14 @@ if is_service_enabled nova && is_baremetal; then
     fi
     # ensure callback daemon is running
     sudo pkill nova-baremetal-deploy-helper || true
-    screen_it baremetal "nova-baremetal-deploy-helper"
+    screen_it baremetal "cd ; nova-baremetal-deploy-helper"
 fi
 
 # Save some values we generated for later use
 CURRENT_RUN_TIME=$(date "+$TIMESTAMP_FORMAT")
 echo "# $CURRENT_RUN_TIME" >$TOP_DIR/.stackenv
 for i in BASE_SQL_CONN ENABLED_SERVICES HOST_IP LOGFILE \
-  SERVICE_HOST SERVICE_PROTOCOL STACK_USER TLS_IP; do
+    SERVICE_HOST SERVICE_PROTOCOL STACK_USER TLS_IP; do
     echo $i=${!i} >>$TOP_DIR/.stackenv
 done
 

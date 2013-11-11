@@ -3,8 +3,9 @@
 # **boot_from_volume.sh**
 
 # This script demonstrates how to boot from a volume.  It does the following:
-#  *  Create a bootable volume
-#  *  Boot a volume-backed instance
+#
+# *  Create a bootable volume
+# *  Boot a volume-backed instance
 
 echo "*********************************************************************"
 echo "Begin DevStack Exercise: $0"
@@ -119,7 +120,7 @@ nova flavor-list
 INSTANCE_TYPE=$(nova flavor-list | grep $DEFAULT_INSTANCE_TYPE | get_field 1)
 if [[ -z "$INSTANCE_TYPE" ]]; then
     # grab the first flavor in the list to launch if default doesn't exist
-   INSTANCE_TYPE=$(nova flavor-list | head -n 4 | tail -n 1 | get_field 1)
+    INSTANCE_TYPE=$(nova flavor-list | head -n 4 | tail -n 1 | get_field 1)
 fi
 
 # Clean-up from previous runs

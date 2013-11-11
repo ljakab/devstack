@@ -44,9 +44,9 @@ source $THIS_DIR/xenrc
 
 xe_min()
 {
-  local cmd="$1"
-  shift
-  xe "$cmd" --minimal "$@"
+    local cmd="$1"
+    shift
+    xe "$cmd" --minimal "$@"
 }
 
 #
@@ -132,8 +132,8 @@ HOST_IP=$(xenapi_ip_on "$MGT_BRIDGE_OR_NET_NAME")
 # Set up ip forwarding, but skip on xcp-xapi
 if [ -a /etc/sysconfig/network ]; then
     if ! grep -q "FORWARD_IPV4=YES" /etc/sysconfig/network; then
-      # FIXME: This doesn't work on reboot!
-      echo "FORWARD_IPV4=YES" >> /etc/sysconfig/network
+        # FIXME: This doesn't work on reboot!
+        echo "FORWARD_IPV4=YES" >> /etc/sysconfig/network
     fi
 fi
 # Also, enable ip forwarding in rc.local, since the above trick isn't working
@@ -270,6 +270,12 @@ set_vm_memory "$GUEST_NAME" "$OSDOMU_MEM_MB"
 
 # Max out VCPU count for better performance
 max_vcpus "$GUEST_NAME"
+
+# Wipe out all network cards
+destroy_all_vifs_of "$GUEST_NAME"
+
+# Add only one interface to prepare the guest template
+add_interface "$GUEST_NAME" "$MGT_BRIDGE_OR_NET_NAME" "0"
 
 # start the VM to run the prepare steps
 xe vm-start vm="$GUEST_NAME"

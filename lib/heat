@@ -2,21 +2,23 @@
 # Install and start **Heat** service
 
 # To enable, add the following to localrc
-# ENABLED_SERVICES+=,heat,h-api,h-api-cfn,h-api-cw,h-eng
+#
+#   ENABLED_SERVICES+=,heat,h-api,h-api-cfn,h-api-cw,h-eng
 
 # Dependencies:
+#
 # - functions
 
 # stack.sh
 # ---------
-# install_heatclient
-# install_heat
-# configure_heatclient
-# configure_heat
-# init_heat
-# start_heat
-# stop_heat
-# cleanup_heat
+# - install_heatclient
+# - install_heat
+# - configure_heatclient
+# - configure_heat
+# - init_heat
+# - start_heat
+# - stop_heat
+# - cleanup_heat
 
 # Save trace setting
 XTRACE=$(set +o | grep xtrace)
@@ -118,9 +120,6 @@ function configure_heat() {
     iniset $HEAT_CONF heat_api_cloudwatch bind_host $HEAT_API_CW_HOST
     iniset $HEAT_CONF heat_api_cloudwatch bind_port $HEAT_API_CW_PORT
 
-    # Set limits to match tempest defaults
-    iniset $HEAT_CONF DEFAULT max_template_size 10240
-
     # heat environment
     sudo mkdir -p $HEAT_ENV_DIR
     sudo chown $STACK_USER $HEAT_ENV_DIR
@@ -198,6 +197,7 @@ function disk_image_create {
 # Restore xtrace
 $XTRACE
 
-# Local variables:
-# mode: shell-script
-# End:
+# Tell emacs to use shell-script-mode
+## Local variables:
+## mode: shell-script
+## End:

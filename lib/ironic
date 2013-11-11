@@ -2,20 +2,21 @@
 # Functions to control the configuration and operation of the **Ironic** service
 
 # Dependencies:
-# ``functions`` file
-# ``DEST``, ``DATA_DIR``, ``STACK_USER`` must be defined
-# ``SERVICE_{TENANT_NAME|PASSWORD}`` must be defined
-# ``SERVICE_HOST``
-# ``KEYSTONE_TOKEN_FORMAT`` must be defined
+#
+# - ``functions`` file
+# - ``DEST``, ``DATA_DIR``, ``STACK_USER`` must be defined
+# - ``SERVICE_{TENANT_NAME|PASSWORD}`` must be defined
+# - ``SERVICE_HOST``
+# - ``KEYSTONE_TOKEN_FORMAT`` must be defined
 
 # ``stack.sh`` calls the entry points in this order:
 #
-# install_ironic
-# configure_ironic
-# init_ironic
-# start_ironic
-# stop_ironic
-# cleanup_ironic
+# - install_ironic
+# - install_ironicclient
+# - init_ironic
+# - start_ironic
+# - stop_ironic
+# - cleanup_ironic
 
 # Save trace setting
 XTRACE=$(set +o | grep xtrace)
@@ -27,6 +28,7 @@ set +o xtrace
 
 # Set up default directories
 IRONIC_DIR=$DEST/ironic
+IRONICCLIENT_DIR=$DEST/python-ironicclient
 IRONIC_AUTH_CACHE_DIR=${IRONIC_AUTH_CACHE_DIR:-/var/cache/ironic}
 IRONIC_CONF_DIR=${IRONIC_CONF_DIR:-/etc/ironic}
 IRONIC_CONF_FILE=$IRONIC_CONF_DIR/ironic.conf
@@ -44,6 +46,18 @@ IRONIC_HOSTPORT=${IRONIC_HOSTPORT:-$SERVICE_HOST:6385}
 
 # Functions
 # ---------
+
+# install_ironic() - Collect source and prepare
+function install_ironic() {
+    git_clone $IRONIC_REPO $IRONIC_DIR $IRONIC_BRANCH
+    setup_develop $IRONIC_DIR
+}
+
+# install_ironicclient() - Collect sources and prepare
+function install_ironicclient() {
+    git_clone $IRONICCLIENT_REPO $IRONICCLIENT_DIR $IRONICCLIENT_BRANCH
+    setup_develop $IRONICCLIENT_DIR
+}
 
 # cleanup_ironic() - Remove residual data files, anything left over from previous
 # runs that would need to clean up.
@@ -79,6 +93,8 @@ function configure_ironic() {
 # configure_ironic_api() - Is used by configure_ironic(). Performs
 # API specific configuration.
 function configure_ironic_api() {
+    iniset $IRONIC_CONF_FILE DEFAULT auth_strategy keystone
+    iniset $IRONIC_CONF_FILE DEFAULT policy_file $IRONIC_POLICY_JSON
     iniset $IRONIC_CONF_FILE keystone_authtoken auth_host $KEYSTONE_AUTH_HOST
     iniset $IRONIC_CONF_FILE keystone_authtoken auth_port $KEYSTONE_AUTH_PORT
     iniset $IRONIC_CONF_FILE keystone_authtoken auth_protocol $KEYSTONE_AUTH_PROTOCOL
@@ -170,12 +186,6 @@ function init_ironic() {
     create_ironic_accounts
 }
 
-# install_ironic() - Collect source and prepare
-function install_ironic() {
-    git_clone $IRONIC_REPO $IRONIC_DIR $IRONIC_BRANCH
-    setup_develop $IRONIC_DIR
-}
-
 # start_ironic() - Start running processes, including screen
 function start_ironic() {
     # Start Ironic API server, if enabled.
@@ -195,7 +205,7 @@ function start_ironic_api() {
     screen_it ir-api "cd $IRONIC_DIR; $IRONIC_BIN_DIR/ironic-api --config-file=$IRONIC_CONF_FILE"
     echo "Waiting for ir-api ($IRONIC_HOSTPORT) to start..."
     if ! timeout $SERVICE_TIMEOUT sh -c "while ! wget --no-proxy -q -O- http://$IRONIC_HOSTPORT; do sleep 1; done"; then
-      die $LINENO "ir-api did not start"
+        die $LINENO "ir-api did not start"
     fi
 }
 
@@ -217,6 +227,7 @@ function stop_ironic() {
 # Restore xtrace
 $XTRACE
 
-# Local variables:
-# mode: shell-script
-# End:
+# Tell emacs to use shell-script-mode
+## Local variables:
+## mode: shell-script
+## End:
