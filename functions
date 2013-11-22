@@ -841,6 +841,7 @@ function is_service_enabled() {
         [[ ${service} == "cinder" && ${ENABLED_SERVICES} =~ "c-" ]] && return 0
         [[ ${service} == "ceilometer" && ${ENABLED_SERVICES} =~ "ceilometer-" ]] && return 0
         [[ ${service} == "glance" && ${ENABLED_SERVICES} =~ "g-" ]] && return 0
+        [[ ${service} == "ironic" && ${ENABLED_SERVICES} =~ "ir-" ]] && return 0
         [[ ${service} == "neutron" && ${ENABLED_SERVICES} =~ "q-" ]] && return 0
         [[ ${service} == "trove" && ${ENABLED_SERVICES} =~ "tr-" ]] && return 0
         [[ ${service} == "swift" && ${ENABLED_SERVICES} =~ "s-" ]] && return 0
@@ -1250,7 +1251,11 @@ function safe_chmod() {
 
 # ``pip install -e`` the package, which processes the dependencies
 # using pip before running `setup.py develop`
-# Uses globals ``STACK_USER``, ``TRACK_DEPENDS``, ``REQUIREMENTS_DIR``
+#
+# Updates the dependencies in project_dir from the
+# openstack/requirements global list before installing anything.
+#
+# Uses globals ``TRACK_DEPENDS``, ``REQUIREMENTS_DIR``
 # setup_develop directory
 function setup_develop() {
     local project_dir=$1
@@ -1266,9 +1271,7 @@ function setup_develop() {
             $SUDO_CMD python update.py $project_dir)
     fi
 
-    pip_install -e $project_dir
-    # ensure that further actions can do things like setup.py sdist
-    safe_chown -R $STACK_USER $1/*.egg-info
+    setup_develop_no_requirements_update $project_dir
 
     # We've just gone and possibly modified the user's source tree in an
     # automated way, which is considered bad form if it's a development
@@ -1283,6 +1286,18 @@ function setup_develop() {
             (cd $project_dir && git reset --hard)
         fi
     fi
+}
+
+# ``pip install -e`` the package, which processes the dependencies
+# using pip before running `setup.py develop`
+# Uses globals ``STACK_USER``
+# setup_develop_no_requirements_update directory
+function setup_develop_no_requirements_update() {
+    local project_dir=$1
+
+    pip_install -e $project_dir
+    # ensure that further actions can do things like setup.py sdist
+    safe_chown -R $STACK_USER $1/*.egg-info
 }
 
 
@@ -1337,11 +1352,24 @@ function upload_image() {
     # Create a directory for the downloaded image tarballs.
     mkdir -p $FILES/images
 
-    # Downloads the image (uec ami+aki style), then extracts it.
-    IMAGE_FNAME=`basename "$image_url"`
-    if [[ ! -f $FILES/$IMAGE_FNAME || "$(stat -c "%s" $FILES/$IMAGE_FNAME)" = "0" ]]; then
-        wget -c $image_url -O $FILES/$IMAGE_FNAME
-        if [[ $? -ne 0 ]]; then
+    if [[ $image_url != file* ]]; then
+        # Downloads the image (uec ami+aki style), then extracts it.
+        IMAGE_FNAME=`basename "$image_url"`
+        if [[ ! -f $FILES/$IMAGE_FNAME || "$(stat -c "%s" $FILES/$IMAGE_FNAME)" = "0" ]]; then
+             wget -c $image_url -O $FILES/$IMAGE_FNAME
+             if [[ $? -ne 0 ]]; then
+                 echo "Not found: $image_url"
+                 return
+             fi
+        fi
+        IMAGE="$FILES/${IMAGE_FNAME}"
+    else
+        # File based URL (RFC 1738): file://host/path
+        # Remote files are not considered here.
+        # *nix: file:///home/user/path/file
+        # windows: file:///C:/Documents%20and%20Settings/user/path/file
+        IMAGE=$(echo $image_url | sed "s/^file:\/\///g")
+        if [[ ! -f $IMAGE || "$(stat -c "%s" $IMAGE)" == "0" ]]; then
             echo "Not found: $image_url"
             return
         fi
@@ -1349,7 +1377,6 @@ function upload_image() {
 
     # OpenVZ-format images are provided as .tar.gz, but not decompressed prior to loading
     if [[ "$image_url" =~ 'openvz' ]]; then
-        IMAGE="$FILES/${IMAGE_FNAME}"
         IMAGE_NAME="${IMAGE_FNAME%.tar.gz}"
         glance --os-auth-token $token --os-image-url http://$GLANCE_HOSTPORT image-create --name "$IMAGE_NAME" --is-public=True --container-format ami --disk-format ami < "${IMAGE}"
         return
@@ -1357,19 +1384,22 @@ function upload_image() {
 
     # vmdk format images
     if [[ "$image_url" =~ '.vmdk' ]]; then
-        IMAGE="$FILES/${IMAGE_FNAME}"
         IMAGE_NAME="${IMAGE_FNAME%.vmdk}"
 
         # Before we can upload vmdk type images to glance, we need to know it's
         # disk type, storage adapter, and networking adapter. These values are
-        # passed to glance as custom properties. 
+        # passed to glance as custom properties.
         # We take these values from the vmdk file if populated. Otherwise, we use
         # vmdk filename, which is expected in the following format:
         #
-        #     <name>-<disk type>:<storage adapter>:<network adapter>
+        #     <name>-<disk type>;<storage adapter>;<network adapter>
         #
         # If the filename does not follow the above format then the vsphere
         # driver will supply default values.
+
+        vmdk_adapter_type=""
+        vmdk_disktype=""
+        vmdk_net_adapter=""
 
         # vmdk adapter type
         vmdk_adapter_type="$(head -25 $IMAGE | grep -a -F -m 1 'ddb.adapterType =' $IMAGE)"
@@ -1389,17 +1419,15 @@ function upload_image() {
             #TODO(alegendre): handle streamOptimized once supported by VMware driver.
             vmdk_disktype="preallocated"
         fi
-        property_string=`echo "$IMAGE_NAME" | grep -oP '(?<=-)(?!.*-).+:.+:.+$'`
-        if [[ ! -z "$property_string" ]]; then
-            IFS=':' read -a props <<< "$property_string"
-            if [[ ! -z "${props[0]}" ]]; then
-                vmdk_disktype="${props[0]}"
-            fi
-            if [[ ! -z "${props[1]}" ]]; then
-                vmdk_adapter_type="${props[1]}"
-            fi
-            vmdk_net_adapter="${props[2]}"
-        fi
+
+        # NOTE: For backwards compatibility reasons, colons may be used in place
+        # of semi-colons for property delimiters but they are not permitted
+        # characters in NTFS filesystems.
+        property_string=`echo "$IMAGE_NAME" | grep -oP '(?<=-)(?!.*-).+[:;].+[:;].+$'`
+        IFS=':;' read -a props <<< "$property_string"
+        vmdk_disktype="${props[0]:-$vmdk_disktype}"
+        vmdk_adapter_type="${props[1]:-$vmdk_adapter_type}"
+        vmdk_net_adapter="${props[2]:-$vmdk_net_adapter}"
 
         glance --os-auth-token $token --os-image-url http://$GLANCE_HOSTPORT image-create --name "$IMAGE_NAME" --is-public=True --container-format bare --disk-format vmdk --property vmware_disktype="$vmdk_disktype" --property vmware_adaptertype="$vmdk_adapter_type" --property hw_vif_model="$vmdk_net_adapter" < "${IMAGE}"
         return
@@ -1408,7 +1436,6 @@ function upload_image() {
     # XenServer-vhd-ovf-format images are provided as .vhd.tgz
     # and should not be decompressed prior to loading
     if [[ "$image_url" =~ '.vhd.tgz' ]]; then
-        IMAGE="$FILES/${IMAGE_FNAME}"
         IMAGE_NAME="${IMAGE_FNAME%.vhd.tgz}"
         glance --os-auth-token $token --os-image-url http://$GLANCE_HOSTPORT image-create --name "$IMAGE_NAME" --is-public=True --container-format=ovf --disk-format=vhd < "${IMAGE}"
         return
@@ -1418,7 +1445,6 @@ function upload_image() {
     # and should not be decompressed prior to loading.
     # Setting metadata, so PV mode is used.
     if [[ "$image_url" =~ '.xen-raw.tgz' ]]; then
-        IMAGE="$FILES/${IMAGE_FNAME}"
         IMAGE_NAME="${IMAGE_FNAME%.xen-raw.tgz}"
         glance \
             --os-auth-token $token \
@@ -1456,7 +1482,6 @@ function upload_image() {
             fi
             ;;
         *.img)
-            IMAGE="$FILES/$IMAGE_FNAME";
             IMAGE_NAME=$(basename "$IMAGE" ".img")
             format=$(qemu-img info ${IMAGE} | awk '/^file format/ { print $3; exit }')
             if [[ ",qcow2,raw,vdi,vmdk,vpc," =~ ",$format," ]]; then
@@ -1467,20 +1492,17 @@ function upload_image() {
             CONTAINER_FORMAT=bare
             ;;
         *.img.gz)
-            IMAGE="$FILES/${IMAGE_FNAME}"
             IMAGE_NAME=$(basename "$IMAGE" ".img.gz")
             DISK_FORMAT=raw
             CONTAINER_FORMAT=bare
             UNPACK=zcat
             ;;
         *.qcow2)
-            IMAGE="$FILES/${IMAGE_FNAME}"
             IMAGE_NAME=$(basename "$IMAGE" ".qcow2")
             DISK_FORMAT=qcow2
             CONTAINER_FORMAT=bare
             ;;
         *.iso)
-            IMAGE="$FILES/${IMAGE_FNAME}"
             IMAGE_NAME=$(basename "$IMAGE" ".iso")
             DISK_FORMAT=iso
             CONTAINER_FORMAT=bare
