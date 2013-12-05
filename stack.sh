@@ -290,6 +290,10 @@ LOG_COLOR=`trueorfalse True $LOG_COLOR`
 # Service startup timeout
 SERVICE_TIMEOUT=${SERVICE_TIMEOUT:-60}
 
+# Reset the bundle of CA certificates
+SSL_BUNDLE_FILE="$DATA_DIR/ca-bundle.pem"
+rm -f $SSL_BUNDLE_FILE
+
 
 # Configure Projects
 # ==================
@@ -799,6 +803,17 @@ fi
 restart_rpc_backend
 
 
+# Export Certicate Authority Bundle
+# ---------------------------------
+
+# If certificates were used and written to the SSL bundle file then these
+# should be exported so clients can validate their connections.
+
+if [ -f $SSL_BUNDLE_FILE ]; then
+    export OS_CACERT=$SSL_BUNDLE_FILE
+fi
+
+
 # Configure database
 # ------------------
 
@@ -1065,7 +1080,9 @@ fi
 # Create an access key and secret key for nova ec2 register image
 if is_service_enabled key && is_service_enabled swift3 && is_service_enabled nova; then
     NOVA_USER_ID=$(keystone user-list | grep ' nova ' | get_field 1)
+    die_if_not_set $LINENO NOVA_USER_ID "Failure retrieving NOVA_USER_ID for nova"
     NOVA_TENANT_ID=$(keystone tenant-list | grep " $SERVICE_TENANT_NAME " | get_field 1)
+    die_if_not_set $LINENO NOVA_TENANT_ID "Failure retrieving NOVA_TENANT_ID for $SERVICE_TENANT_NAME"
     CREDS=$(keystone ec2-credentials-create --user_id $NOVA_USER_ID --tenant_id $NOVA_TENANT_ID)
     ACCESS_KEY=$(echo "$CREDS" | awk '/ access / { print $4 }')
     SECRET_KEY=$(echo "$CREDS" | awk '/ secret / { print $4 }')
@@ -1146,6 +1163,7 @@ if is_service_enabled trove; then
     start_trove
 fi
 
+
 # Create account rc files
 # =======================
 
@@ -1154,7 +1172,13 @@ fi
 # which is helpful in image bundle steps.
 
 if is_service_enabled nova && is_service_enabled key; then
-    $TOP_DIR/tools/create_userrc.sh -PA --target-dir $TOP_DIR/accrc
+    USERRC_PARAMS="-PA --target-dir $TOP_DIR/accrc"
+
+    if [ -f $SSL_BUNDLE_FILE ]; then
+        USERRC_PARAMS="$USERRC_PARAMS --os-cacert $SSL_BUNDLE_FILE"
+    fi
+
+    $TOP_DIR/tools/create_userrc.sh $USERRC_PARAMS
 fi
 
 
@@ -1230,7 +1254,7 @@ fi
 CURRENT_RUN_TIME=$(date "+$TIMESTAMP_FORMAT")
 echo "# $CURRENT_RUN_TIME" >$TOP_DIR/.stackenv
 for i in BASE_SQL_CONN ENABLED_SERVICES HOST_IP LOGFILE \
-    SERVICE_HOST SERVICE_PROTOCOL STACK_USER TLS_IP; do
+    SERVICE_HOST SERVICE_PROTOCOL STACK_USER TLS_IP KEYSTONE_AUTH_PROTOCOL OS_CACERT; do
     echo $i=${!i} >>$TOP_DIR/.stackenv
 done
 
@@ -1252,6 +1276,13 @@ if [[ -d $TOP_DIR/extras.d ]]; then
         [[ -r $i ]] && source $i stack extra
     done
 fi
+
+# Local Configuration
+# ===================
+
+# Apply configuration from local.conf if it exists for layer 2 services
+# Phase: post-extra
+merge_config_group $TOP_DIR/local.conf post-extra
 
 
 # Run local script
