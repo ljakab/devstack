@@ -41,8 +41,8 @@
 # to run Quantum on this host, make sure that q-svc is also in
 # ``ENABLED_SERVICES``.
 #
-# If you're planning to use the Quantum openvswitch plugin, set
-# ``Q_PLUGIN`` to "openvswitch" and make sure the q-agt service is enabled
+# If you're planning to use the Quantum csr1kv_openvswitch plugin, set
+# ``Q_PLUGIN`` to "csr1kv_openvswitch" and make sure the q-agt service is enabled
 # in ``ENABLED_SERVICES``.  If you're planning to use the Quantum
 # linuxbridge plugin, set ``Q_PLUGIN`` to "linuxbridge" and make sure the
 # q-agt service is enabled in ``ENABLED_SERVICES``.
@@ -66,12 +66,12 @@ QUANTUM_DIR=$DEST/neutron
 QUANTUMCLIENT_DIR=$DEST/python-neutronclient
 QUANTUM_AUTH_CACHE_DIR=${QUANTUM_AUTH_CACHE_DIR:-/var/cache/quantum}
 
-QUANTUM_CONF_DIR=/etc/quantum
+QUANTUM_CONF_DIR=/etc/quantum_csr1kv
 QUANTUM_CONF=$QUANTUM_CONF_DIR/quantum.conf
 export QUANTUM_TEST_CONFIG_FILE=${QUANTUM_TEST_CONFIG_FILE:-"$QUANTUM_CONF_DIR/debug.ini"}
 
 # Default Quantum Plugin
-Q_PLUGIN=${Q_PLUGIN:-openvswitch}
+Q_PLUGIN=${Q_PLUGIN:-csr1kv_openvswitch}
 # Default Quantum Port
 Q_PORT=${Q_PORT:-9696}
 # Default Quantum Host
@@ -107,7 +107,7 @@ if is_service_enabled quantum; then
     # Provider Network Configurations
     # --------------------------------
 
-    # The following variables control the Quantum openvswitch and
+    # The following variables control the Quantum csr1kv_openvswitch and
     # linuxbridge plugins' allocation of tenant networks and
     # availability of provider networks. If these are not configured
     # in localrc, tenant networks will be local to the host (with no
@@ -115,7 +115,7 @@ if is_service_enabled quantum; then
     # available for the allocation of provider networks.
 
     # To use GRE tunnels for tenant networks, set to True in
-    # localrc. GRE tunnels are only supported by the openvswitch
+    # localrc. GRE tunnels are only supported by the csr1kv_openvswitch
     # plugin, and currently only on Ubuntu.
     ENABLE_TENANT_TUNNELS=${ENABLE_TENANT_TUNNELS:-False}
 
@@ -125,7 +125,7 @@ if is_service_enabled quantum; then
     TENANT_TUNNEL_RANGES=${TENANT_TUNNEL_RANGE:-1:1000}
 
     # To use VLANs for tenant networks, set to True in localrc. VLANs
-    # are supported by the openvswitch and linuxbridge plugins, each
+    # are supported by the csr1kv_openvswitch and linuxbridge plugins, each
     # requiring additional configuration described below.
     ENABLE_TENANT_VLANS=${ENABLE_TENANT_VLANS:-False}
 
@@ -140,13 +140,13 @@ if is_service_enabled quantum; then
     # If using VLANs for tenant networks, or if using flat or VLAN
     # provider networks, set in localrc to the name of the physical
     # network, and also configure OVS_PHYSICAL_BRIDGE for the
-    # openvswitch agent or LB_PHYSICAL_INTERFACE for the linuxbridge
+    # csr1kv_openvswitch agent or LB_PHYSICAL_INTERFACE for the linuxbridge
     # agent, as described below.
     #
     # Example: ``PHYSICAL_NETWORK=default``
     PHYSICAL_NETWORK=${PHYSICAL_NETWORK:-}
 
-    # With the openvswitch plugin, if using VLANs for tenant networks,
+    # With the csr1kv_openvswitch plugin, if using VLANs for tenant networks,
     # or if using flat or VLAN provider networks, set in localrc to
     # the name of the OVS bridge to use for the physical network. The
     # bridge will be created if it does not already exist, but a
@@ -164,7 +164,7 @@ if is_service_enabled quantum; then
     # Example: ``LB_PHYSICAL_INTERFACE=eth1``
     LB_PHYSICAL_INTERFACE=${LB_PHYSICAL_INTERFACE:-}
 
-    # With the openvswitch plugin, set to True in localrc to enable
+    # With the csr1kv_openvswitch plugin, set to True in localrc to enable
     # provider GRE tunnels when ``ENABLE_TENANT_TUNNELS`` is False.
     #
     # Example: ``OVS_ENABLE_TUNNELING=True``
@@ -214,6 +214,9 @@ function configure_quantum() {
     fi
     if is_service_enabled q-l3; then
         _configure_quantum_l3_agent
+    fi
+    if is_service_enabled q-l3cfgagent; then
+        _configure_quantum_l3_cfg_agent
     fi
     if is_service_enabled q-meta; then
         _configure_quantum_metadata_agent
@@ -387,6 +390,11 @@ function start_quantum_agents() {
     if is_service_enabled q-lbaas; then
         screen_it q-lbaas "cd $QUANTUM_DIR && python $AGENT_LBAAS_BINARY --config-file $QUANTUM_CONF --config-file=$LBAAS_AGENT_CONF_FILENAME"
     fi
+
+    if is_service_enabled q-l3cfgagent; then
+        screen_it q-l3cfgagent "cd $QUANTUM_DIR && python $AGENT_L3CFGAGENT_BINARY --config-file $QUANTUM_CONF --config-file=$Q_L3_CONF_FILE"
+
+    fi
 }
 
 # stop_quantum() - Stop running processes (non-screen)
@@ -512,6 +520,14 @@ function _configure_quantum_l3_agent() {
     quantum_plugin_configure_l3_agent
 }
 
+function _configure_quantum_l3_cfg_agent() {
+    Q_L3CFGAGENT_ENABLED=True
+    AGENT_L3CFGAGENT_BINARY="$QUANTUM_DIR/bin/quantum-l3-cfg-agent"
+    Q_L3CFGAGENT_CONF_FILE=$QUANTUM_CONF_DIR/l3_cfg_agent.ini
+
+#    quantum_plugin_configure_l3_cfg_agent
+}
+
 function _configure_quantum_metadata_agent() {
     AGENT_META_BINARY="$QUANTUM_DIR/bin/quantum-metadata-agent"
     Q_META_CONF_FILE=$QUANTUM_CONF_DIR/metadata_agent.ini
@@ -551,7 +567,11 @@ function _configure_quantum_service() {
     Q_POLICY_FILE=$QUANTUM_CONF_DIR/policy.json
 
     cp $QUANTUM_DIR/etc/api-paste.ini $Q_API_PASTE_FILE
-    cp $QUANTUM_DIR/etc/policy.json $Q_POLICY_FILE
+    if [[ "$Q_PLUGIN" == "csr1kv_openvswitch" ]]; then
+        cp $QUANTUM_DIR/quantum/plugins/csr1kv_openvswitch/copy_to/quantum_etc_dir/policy.json $Q_POLICY_FILE
+    else
+        cp $QUANTUM_DIR/etc/policy.json $Q_POLICY_FILE
+    fi
 
     if is_service_enabled $DATABASE_BACKENDS; then
         recreate_database $Q_DB_NAME utf8

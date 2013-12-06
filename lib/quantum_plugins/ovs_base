@@ -60,7 +60,11 @@ function _quantum_ovs_base_configure_nova_vif_driver() {
     # The hybrid VIF driver needs to be specified when Quantum Security Group
     # is enabled (until vif_security attributes are supported in VIF extension)
     if [[ "$Q_USE_SECGROUP" == "True" ]]; then
-        NOVA_VIF_DRIVER=${NOVA_VIF_DRIVER:-"nova.virt.libvirt.vif.LibvirtHybridOVSBridgeDriver"}
+	if [[ "$Q_PLUGIN" == "csr1kv_openvswitch" ]]; then
+	    NOVA_VIF_DRIVER=${NOVA_VIF_DRIVER:-"nova.virt.libvirt.vif.LibvirtTrunkHybridOVSBridgeDriver"}
+	else    
+            NOVA_VIF_DRIVER=${NOVA_VIF_DRIVER:-"nova.virt.libvirt.vif.LibvirtHybridOVSBridgeDriver"}
+	fi
     else
         NOVA_VIF_DRIVER=${NOVA_VIF_DRIVER:-"nova.virt.libvirt.vif.LibvirtGenericVIFDriver"}
     fi
