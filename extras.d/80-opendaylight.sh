@@ -13,10 +13,15 @@ if [ "$ODL_FOUND" == "0" ] ; then
         :
     elif [[ "$1" == "stack" && "$2" == "extra" ]]; then
         echo_summary "Initializing OpenDaylight"
-        read ovstbl <<< $(sudo ovs-vsctl get Open_vSwitch . _uuid)
-        ODL_HOST=$(grep url /$Q_PLUGIN_CONF_FILE | sed -e s'/.*\/\///'g -e 's/\:.*//'g)
-        sudo ovs-vsctl set-manager tcp:$ODL_HOST:6640
-        sudo ovs-vsctl set Open_vSwitch $ovstbl other_config={"local_ip"="$HOST_IP"}
+        if [ "$ODL_LOCAL_IP" == "" ]; then
+            ODL_LOCAL_IP=$HOST_IP
+        fi
+        if [ "$ODL_MGR_IP" == "" ]; then
+            read ovstbl <<< $(sudo ovs-vsctl get Open_vSwitch . _uuid)
+            ODL_MGR_IP=$(grep url /$Q_PLUGIN_CONF_FILE | sed -e s'/.*\/\///'g -e 's/\:.*//'g)
+        fi
+        sudo ovs-vsctl set-manager tcp:$ODL_MGR_IP:6640
+        sudo ovs-vsctl set Open_vSwitch $ovstbl other_config={"local_ip"="$ODL_LOCAL_IP"}
     elif [[ "$1" == "stack" && "$2" == "post-extra" ]]; then
         # no-op
         :
