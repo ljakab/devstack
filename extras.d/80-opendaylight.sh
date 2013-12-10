@@ -20,7 +20,10 @@ if [ "$ODL_FOUND" == "0" ] ; then
             read ovstbl <<< $(sudo ovs-vsctl get Open_vSwitch . _uuid)
             ODL_MGR_IP=$(grep url /$Q_PLUGIN_CONF_FILE | sed -e s'/.*\/\///'g -e 's/\:.*//'g)
         fi
-        sudo ovs-vsctl set-manager tcp:$ODL_MGR_IP:6640
+        if [ "$ODL_MGR_PORT" == "" ]; then
+            ODL_MGR_PORT=6640
+        fi
+        sudo ovs-vsctl set-manager tcp:$ODL_MGR_IP:$ODL_MGR_PORT
         sudo ovs-vsctl set Open_vSwitch $ovstbl other_config={"local_ip"="$ODL_LOCAL_IP"}
     elif [[ "$1" == "stack" && "$2" == "post-extra" ]]; then
         # no-op
