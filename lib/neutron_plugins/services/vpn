@@ -20,6 +20,9 @@ function neutron_vpn_configure_common() {
     else
         Q_SERVICE_PLUGIN_CLASSES="$Q_SERVICE_PLUGIN_CLASSES,$VPN_PLUGIN"
     fi
+    Q_VPN_CONF_FILE=$NEUTRON_CONF_DIR/vpn_agent.ini
+    cp $NEUTRON_DIR/etc/vpn_agent.ini $Q_VPN_CONF_FILE
+    VPN_CONF_FILES="--config-file $NEUTRON_CONF --config-file=$Q_VPN_CONF_FILE"
 }
 
 # Restore xtrace

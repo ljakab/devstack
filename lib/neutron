@@ -460,7 +460,7 @@ function start_neutron_agents() {
         L3_CONF_FILES="$L3_CONF_FILES --config-file $Q_FWAAS_CONF_FILE"
     fi
     if is_service_enabled q-vpn; then
-        screen_it q-vpn "cd $NEUTRON_DIR && $AGENT_VPN_BINARY $L3_CONF_FILES"
+        screen_it q-vpn "cd $NEUTRON_DIR && $AGENT_VPN_BINARY $VPN_CONF_FILES"
     else
         screen_it q-l3 "cd $NEUTRON_DIR && python $AGENT_L3_BINARY $L3_CONF_FILES"
     fi
