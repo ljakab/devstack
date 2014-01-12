@@ -9,6 +9,9 @@ DEST=/opt/stack
 # Destination for working data
 DATA_DIR=${DEST}/data
 
+# Destination for status files
+SERVICE_DIR=${DEST}/status
+
 # Determine stack user
 if [[ $EUID -eq 0 ]]; then
     STACK_USER=stack
@@ -135,6 +138,10 @@ OSLOCFG_BRANCH=${OSLOCFG_BRANCH:-master}
 # oslo.messaging
 OSLOMSG_REPO=${OSLOMSG_REPO:-${GIT_BASE}/openstack/oslo.messaging.git}
 OSLOMSG_BRANCH=${OSLOMSG_BRANCH:-master}
+
+# oslo.rootwrap
+OSLORWRAP_REPO=${OSLORWRAP_REPO:-${GIT_BASE}/openstack/oslo.rootwrap.git}
+OSLORWRAP_BRANCH=${OSLORWRAP_BRANCH:-master}
 
 # pbr drives the setuptools configs
 PBR_REPO=${PBR_REPO:-${GIT_BASE}/openstack-dev/pbr.git}
