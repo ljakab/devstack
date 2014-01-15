@@ -6,7 +6,7 @@ MY_XTRACE=$(set +o | grep xtrace)
 set +o xtrace
 
 # Enable this to simply and quickly enable tunneling with ML2.
-# Select either 'gre', 'vxlan', or '(gre vxlan)'
+# Select either 'gre', 'vxlan', 'lisp' or '(gre vxlan)'
 Q_ML2_TENANT_NETWORK_TYPE=${Q_ML2_TENANT_NETWORK_TYPE:-}
 # This has to be set here since the agent will set this in the config file
 if [[ "$Q_ML2_TENANT_NETWORK_TYPE" != "" ]]; then
@@ -22,11 +22,13 @@ source $TOP_DIR/lib/neutron_plugins/${Q_AGENT}_agent
 # List of MechanismDrivers to load
 Q_ML2_PLUGIN_MECHANISM_DRIVERS=${Q_ML2_PLUGIN_MECHANISM_DRIVERS:-openvswitch,linuxbridge}
 # List of Type Drivers to load
-Q_ML2_PLUGIN_TYPE_DRIVERS=${Q_ML2_PLUGIN_TYPE_DRIVERS:-local,flat,vlan,gre,vxlan}
+Q_ML2_PLUGIN_TYPE_DRIVERS=${Q_ML2_PLUGIN_TYPE_DRIVERS:-local,flat,vlan,gre,vxlan,lisp}
 # Default GRE TypeDriver options
 Q_ML2_PLUGIN_GRE_TYPE_OPTIONS=${Q_ML2_PLUGIN_GRE_TYPE_OPTIONS:-tunnel_id_ranges=$TENANT_TUNNEL_RANGES}
 # Default VXLAN TypeDriver options
 Q_ML2_PLUGIN_VXLAN_TYPE_OPTIONS=${Q_ML2_PLUGIN_VXLAN_TYPE_OPTIONS:-vni_ranges=1001:2000}
+# Default LISP TypeDriver options
+Q_ML2_PLUGIN_LISP_TYPE_OPTIONS=${Q_ML2_PLUGIN_LISP_TYPE_OPTIONS:-iid_ranges=2001:3000}
 # Default VLAN TypeDriver options
 Q_ML2_PLUGIN_VLAN_TYPE_OPTIONS=${Q_ML2_PLUGIN_VLAN_TYPE_OPTIONS:-}
 
@@ -110,6 +112,8 @@ function neutron_plugin_configure_service() {
     populate_ml2_config /$Q_PLUGIN_CONF_FILE ml2_type_gre $Q_ML2_PLUGIN_GRE_TYPE_OPTIONS
 
     populate_ml2_config /$Q_PLUGIN_CONF_FILE ml2_type_vxlan $Q_ML2_PLUGIN_VXLAN_TYPE_OPTIONS
+
+    populate_ml2_config /$Q_PLUGIN_CONF_FILE ml2_type_lisp $Q_ML2_PLUGIN_LISP_TYPE_OPTIONS
 
     if [ "$Q_ML2_PLUGIN_VLAN_TYPE_OPTIONS" != "" ]; then
         populate_ml2_config $Q_ML2_PLUGIN_VLAN_TYPE_OPTIONS /$Q_PLUGIN_CONF_FILE ml2_type_vlan
