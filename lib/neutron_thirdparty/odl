@@ -26,7 +26,7 @@ function install_odl() {
     local _pwd=$(pwd)
 
     if is_ubuntu; then
-        install_package maven openjdk-7-jre openjdk-7-jdk 
+        install_package maven openjdk-7-jre openjdk-7-jdk
     else
         yum_install maven java-1.7.0-openjdk
     fi
