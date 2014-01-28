@@ -63,4 +63,3 @@ function start_odl() {
 function stop_odl() {
     :
 }
-
